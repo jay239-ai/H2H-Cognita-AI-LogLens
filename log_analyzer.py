@@ -1,7 +1,7 @@
 from google import genai
 import time
 
-client = genai.Client(api_key="AIzaSyD7lA-4ZP8o3WFpF_EOLyDHWQwCXI66yKI")
+client = genai.Client(api_key="API_KEY")
 
 
 def detect_log_context(log):
