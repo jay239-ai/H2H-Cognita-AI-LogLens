@@ -1,28 +1,37 @@
 import streamlit as st
-from log_analyzer import analyze_log
+from log_analyzer import analyze_log_ai
 
-st.title("AI-Powered Log Analyzer")
+st.set_page_config(page_title="AI Log Analyzer", layout="centered")
+
+st.title("🔍 AI-Powered Log Analyzer")
 
 st.write("Paste logs below (one per line):")
 
 # User input
-user_input = st.text_area("Enter logs")
+user_input = st.text_area("Enter logs", height=200)
 
 if st.button("Analyze Logs"):
 
-    logs = user_input.split("\n")
+    if not user_input.strip():
+        st.warning("Please enter at least one log.")
+    else:
+        logs = user_input.split("\n")
 
-    st.subheader("Results:")
+        st.subheader("Results:")
 
-    for log in logs:
-        if log.strip() == "":
-            continue
+        for log in logs:
+            log = log.strip()
 
-        result = analyze_log(log)
+            if not log:
+                continue
 
-        st.markdown(f"### Log: {log}")
-        st.write(f"**Issue:** {result['Issue']}")
-        st.write(f"**Reason:** {result['Reason']}")
-        st.write(f"**Impact:** {result['Impact']}")
-        st.write(f"**Action:** {result['Action']}")
-        st.write("---")
+            with st.spinner(f"Analyzing log..."):
+                result = analyze_log_ai(log)
+
+            st.markdown(f"### 📄 Log:")
+            st.code(log)
+
+            st.markdown("### 🤖 Analysis:")
+            st.text(result)
+
+            st.write("---")

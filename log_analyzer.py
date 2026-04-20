@@ -1,80 +1,67 @@
-import re
+from google import genai
+import time
 
-# Rule-based (fast + reliable)
-def analyze_log_rule_based(log):
+client = genai.Client(api_key="AIzaSyD7lA-4ZP8o3WFpF_EOLyDHWQwCXI66yKI")
+
+
+def detect_log_context(log):
     log_lower = log.lower()
 
-    rules = [
-        {
-            "pattern": r"failed password",
-            "output": {
-                "Issue": "Unauthorized login attempt",
-                "Reason": "Failed password detected",
-                "Impact": "Possible security threat",
-                "Action": "Check IP and secure authentication"
-            }
-        },
-        {
-            "pattern": r"\b500\b",
-            "output": {
-                "Issue": "Server error",
-                "Reason": "HTTP 500 status code",
-                "Impact": "Website or API may be down",
-                "Action": "Check backend server"
-            }
-        },
-        {
-            "pattern": r"timeout",
-            "output": {
-                "Issue": "Timeout issue",
-                "Reason": "Request exceeded time limit",
-                "Impact": "Slow or failed operations",
-                "Action": "Check network or database"
-            }
-        },
-        {
-            "pattern": r"connection refused",
-            "output": {
-                "Issue": "Connection failure",
-                "Reason": "Service refused connection",
-                "Impact": "Service unavailable",
-                "Action": "Ensure service is running"
-            }
-        },
-        {
-            "pattern": r"down|link-3",
-            "output": {
-                "Issue": "Network/system down",
-                "Reason": "Component inactive",
-                "Impact": "Loss of connectivity",
-                "Action": "Check network device"
-            }
-        }
-    ]
-
-    for rule in rules:
-        if re.search(rule["pattern"], log_lower):
-            return rule["output"]
-
-    return None  # important
+    if "port=22" in log_lower or "ssh" in log_lower:
+        return "Possible SSH intrusion attempt"
+    elif "login" in log_lower or "auth" in log_lower:
+        return "Authentication-related issue"
+    elif "timeout" in log_lower:
+        return "Network/server timeout issue"
+    elif "blocked" in log_lower:
+        return "Security rule triggered (blocked traffic)"
+    elif "purchase" in log_lower or "product" in log_lower:
+        return "E-commerce transaction activity"
+    else:
+        return "General system activity"
 
 
-# AI-based (placeholder now, real API later)
-def analyze_log_ai(log):
-    return {
-        "Issue": "AI Analysis",
-        "Reason": f"AI interpretation of log: {log}",
-        "Impact": "May affect system functionality",
-        "Action": "Further investigation required"
-    }
+def analyze_log_ai(log, retries=3, delay=2):
+    log = log.strip()
+    context = detect_log_context(log)
 
+    # ✅ FIXED variable name
+    prompt = f"""
+Analyze the following log and return:
 
-# Final function (hybrid)
-def analyze_log(log):
-    result = analyze_log_rule_based(log)
+Issue:
+Reason:
+Impact:
+Action:
 
-    if result:
-        return result
-    
-    # fallback to AI
-    return analyze_log_ai(log)
+Log:
+{log}
+"""
+
+    for attempt in range(retries):
+        try:
+            response = client.models.generate_content(
+                model="models/gemini-2.5-flash",
+                contents=prompt
+            )
+
+            if response and response.text:
+                return response.text.strip()
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            print(f"⚠️ Attempt {attempt+1} failed:", error_msg)
+
+            if attempt < retries - 1:
+                time.sleep(delay)
+                continue
+
+            return f"""Issue: AI Analysis Failure
+Reason: {error_msg}
+Impact: Log analysis could not be completed
+Action: Check API setup"""
+
+    return """Issue: Unknown Failure
+Reason: Unexpected execution error
+Impact: Analysis not completed
+Action: Check system logs"""
