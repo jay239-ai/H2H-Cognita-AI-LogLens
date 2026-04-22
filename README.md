@@ -1,145 +1,76 @@
-# 🚀 LogLens — AI-Powered Incident Intelligence Engine
+# 🛰️ NetPulse — WiFi Experience Intelligence Platform
 
-> A smart log intelligence system that transforms raw system logs into clear, actionable incident insights using a hybrid of rule-based analysis and AI reasoning.
-
----
-
-## ⚙️ System Pipeline (Core Flow)
-
-Raw Logs (Upload / Paste)  
-→ Parsing Engine  
-→ Cleaning & Normalization  
-→ Pattern Grouping  
-→ Incident Detection  
-→ Severity & Confidence Scoring  
-→ AI Enhancement (Gemini API)  
-→ Structured Insight Dashboard  
+> A cross-platform network analyzer that transforms technical metrics into human-readable stories and generative art.
 
 ---
 
-## 💡 What LogLens Does
+## 🚀 Features
 
-LogLens takes complex, unstructured system logs and converts them into meaningful incident intelligence.
-
-Instead of raw log noise, it provides:
-
-- What happened in the system
-- Which service is affected
-- Why it happened (root cause)
-- How severe the issue is
-- What action should be taken
+- **🔥 WiFi Story Mode**: AI-powered narration of your connection history.
+- **🔥 Living Signal Map**: Generative waveform art reflecting real-time signal health.
+- **🔥 QoE Application Profiler**: Performance ratings for Zoom, Gaming, and Streaming.
+- **🔥 Root Cause Engine**: Automatic detection of interference and congestion.
 
 ---
 
-## 🔥 Problem We Solve
+## 🛠️ Deployment Instructions
 
-Modern systems generate massive logs across services, but:
+### 1. Backend (Render)
+1. Create a new **Web Service** on [Render](https://render.com).
+2. Connect your GitHub repository.
+3. Use the following settings:
+   - **Environment**: `Python`
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `gunicorn -w 4 -k uvicorn.workers.UvicornWorker api.main:app`
+4. Add **Environment Variables**:
+   - `GEMINI_API_KEY`: Your Google Gemini API Key.
+   - `PORT`: 10000 (default)
 
-- Logs are hard to read and analyze manually  
-- Root cause detection is time-consuming  
-- Incident response gets delayed during outages  
-
-This leads to slower debugging and increased downtime.
-
----
-
-## 🧠 How It Works
-
-### 1. Log Processing Layer
-- Parses structured and unstructured logs
-- Extracts timestamp, service, severity, and message
-
-### 2. Pattern Intelligence Engine
-- Groups repeated log patterns
-- Detects anomalies based on frequency
-
-### 3. Incident Detection System
-- Identifies main failure cluster
-- Extracts supporting evidence logs
-- Assigns severity level dynamically
-
-### 4. AI Reasoning Layer
-- Enhances rule-based analysis using Gemini AI
-- Explains root cause in natural language
-- Suggests actionable resolution steps
-
-### 5. Confidence Engine
-- Evaluates reliability of detected incidents
-- Outputs confidence score for decision support
-
-### 6. Visualization Dashboard
-- Interactive Streamlit interface
-- Real-time log analysis
-- Structured incident reporting
+### 2. Frontend (Netlify)
+1. Create a new site on [Netlify](https://netlify.com).
+2. Select the `frontend/` directory as the **Base directory**.
+3. Set **Publish directory** to `.`.
+4. **IMPORTANT**: Update the `API_BASE_URL` in `frontend/index.html` to point to your Render backend URL.
 
 ---
 
-## 🎯 Output Experience
+## 🛠️ Local Development
 
-LogLens delivers a structured incident report:
-
-- Log Preview (clean formatted view)
-- Top recurring issues
-- Main incident detection
-- Severity classification
-- Root cause explanation
-- Evidence-based logs
-- Timeline reconstruction
-- Recommended actions
-- AI deep analysis
-- Confidence score visualization
+1. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. Start the platform:
+   ```bash
+   python netpulse.py
+   ```
+3. Open `frontend/index.html` in your browser.
 
 ---
 
-## 🧪 Example Scenario
+## 📊 Feature Comparison
 
-Input:
-Repeated authentication failures in login service logs
-
-Output:
-- Incident: Authentication failure spike detected  
-- Severity: Medium  
-- Root Cause: Possible invalid credentials or authentication service degradation  
-- Impact: Multiple failed login attempts affecting users  
-- Recommendation: Investigate authentication service and credential validation flow  
-
----
-
-## 🧠 Key Innovation
-
-LogLens combines:
-
-- Rule-based log intelligence for speed and structure  
-- AI-based reasoning for explanation and clarity  
-
-This hybrid approach ensures fast detection with human-readable understanding.
+| Feature | Basic Ping | NetPulse |
+|---|---|---|
+| Latency Monitoring | ✅ | ✅ |
+| Jitter/Packet Loss | ❌ | ✅ |
+| Living Signal Map | ❌ | ✅ (Generative Art) |
+| WiFi Story Mode | ❌ | ✅ (AI Narration) |
+| "What If" Simulator | ❌ | ✅ (Predictive QoE) |
+| Root Cause Detection | ❌ | ✅ (Automatic) |
 
 ---
 
-## 📌 Project Status
+## 🏗️ Project Structure
 
-- Log parsing engine fully implemented and working  
-- Log grouping and cleaning system integrated  
-- Incident detection system functional  
-- Severity classification system active  
-- Confidence scoring implemented  
-- AI analysis layer integrated (Gemini API)  
-- Streamlit dashboard fully operational  
-- End-to-end pipeline working successfully  
+- `agent/`: Network metric collectors (Windows & Linux).
+- `api/`: FastAPI backend and SSE stream.
+- `frontend/`: React-based dashboard with Tailwind and Framer Motion.
+- `normalizer.py`: Metrics windowing and normalization.
+- `analyzer.py`: Root cause detection logic.
+- `qoe.py`: Quality of Experience scoring engine.
 
 ---
 
-## 🏁 Closing Statement
-
-LogLens bridges the gap between machine-generated logs and human decision-making, enabling faster debugging, clearer insights, and smarter incident response.
-
-> From raw logs → to instant clarity.
-
----
-
-## 👥 Team
-
-Team Cognita  
-1. Kousalya C S  
-2. Penderi Jaya Sai  
-
+## 👥 Authors
+Team Cognita

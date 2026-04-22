@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NetPulse — WiFi Experience Intelligence</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Space Grotesk', sans-serif; background: #05070A; color: #E2E8F0; }
+        .glass { background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
+        .accent-gradient { background: linear-gradient(135deg, #3B82F6, #8B5CF6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .waveform-container { position: relative; height: 300px; width: 100%; overflow: hidden; border-radius: 1rem; }
+        canvas { display: block; width: 100%; height: 100%; }
+        .pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+
+        // 🚀 CONFIGURE YOUR BACKEND URL HERE
+        const API_BASE_URL = window.location.hostname === 'localhost' 
+            ? '' 
+            : 'https://your-netpulse-backend.onrender.com'; // 👈 UPDATE THIS AFTER RENDER DEPLOY
+
+        // ─── Browser Metrics Collector ───
+        async function collectBrowserMetrics(backendUrl) {
+            const pingUrl = `${backendUrl}/api/ping`;
+            const PING_COUNT = 5;
+            const TIMEOUT = 4000;
+            
+            let latencies = [];
+            let failures = 0;
+
+            // Run multiple pings to measure latency + jitter + loss
+            for (let i = 0; i < PING_COUNT; i++) {
+                try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
+                    
+                    const start = performance.now();
+                    await fetch(pingUrl, { 
+                        signal: controller.signal,
+                        cache: 'no-store',
+                        mode: 'cors'
+                    });
+                    const elapsed = performance.now() - start;
+                    clearTimeout(timeoutId);
+                    latencies.push(elapsed);
+                } catch (e) {
+                    failures++;
+                }
+            }
+
+            // Calculate metrics
+            const avgLatency = latencies.length > 0 
+                ? latencies.reduce((a, b) => a + b, 0) / latencies.length 
+                : 0;
+            
+            // Jitter = average deviation from mean
+            const jitter = latencies.length > 1
+                ? latencies.reduce((sum, l) => sum + Math.abs(l - avgLatency), 0) / latencies.length
+                : 0;
+            
+            const packetLoss = (failures / PING_COUNT) * 100;
+
+            // Navigator Connection API (where available)
+            const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+            const downlink = conn?.downlink || 0;
+            const rtt = conn?.rtt || avgLatency;
+            const effectiveType = conn?.effectiveType || '4g';
+            const connectionType = conn?.type || 'wifi';
+
+            // Throughput estimation: download a resource and measure speed
+            let throughput = downlink;
+            if (!downlink && latencies.length > 0) {
+                // Rough estimate from ping response size / time
+                throughput = 1; // fallback 1 Mbps
+            }
+
+            return {
+                latency_ms: Math.round(avgLatency * 100) / 100,
+                jitter_ms: Math.round(jitter * 100) / 100,
+                packet_loss_pct: Math.round(packetLoss * 100) / 100,
+                downlink_mbps: throughput,
+                rtt_ms: rtt,
+                effective_type: effectiveType,
+                connection_type: connectionType
+            };
+        }
+
+        const SignalCanvas = ({ rssi, jitter, packetLoss }) => {
+            const canvasRef = useRef(null);
+            
+            useEffect(() => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                let animationFrameId;
+                let offset = 0;
+
+                const render = () => {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    const width = canvas.width;
+                    const height = canvas.height;
+                    const midY = height / 2;
+                    
+                    const amplitude = Math.max(10, (100 + rssi) * 2);
+                    const jitterEffect = jitter * 0.05;
+                    const saturation = 100 - packetLoss * 10;
+                    
+                    ctx.beginPath();
+                    ctx.lineWidth = 3;
+                    ctx.strokeStyle = `hsla(${210 + (packetLoss * 5)}, ${saturation}%, 60%, 0.8)`;
+                    
+                    for (let x = 0; x < width; x++) {
+                        const freq = 0.01 + (jitter * 0.001);
+                        const turbulence = Math.sin(x * 0.05 + offset * 2) * jitterEffect;
+                        const y = midY + 
+                                 Math.sin(x * freq + offset) * amplitude +
+                                 Math.cos(x * freq * 2.5 + offset * 1.5) * (amplitude / 3) +
+                                 turbulence;
+                        if (x === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.stroke();
+                    offset += 0.05 + (jitter * 0.002);
+                    animationFrameId = requestAnimationFrame(render);
+                };
+
+                render();
+                return () => cancelAnimationFrame(animationFrameId);
+            }, [rssi, jitter, packetLoss]);
+
+            return (
+                <div className="waveform-container glass">
+                    <canvas ref={canvasRef} width={800} height={300} />
+                    <div className="absolute top-4 left-6 flex items-center space-x-2">
+                        <div className={`w-2 h-2 rounded-full bg-blue-500 ${jitter > 20 ? 'pulse' : ''}`}></div>
+                        <span className="text-xs uppercase tracking-widest text-blue-400 font-bold">Live Signal Waveform</span>
+                    </div>
+                </div>
+            );
+        };
+
+        const Dashboard = () => {
+            const [data, setData] = useState(null);
+            const [story, setStory] = useState("Collecting signal intelligence...");
+            const [loadingStory, setLoadingStory] = useState(false);
+            const [backendUrl, setBackendUrl] = useState(API_BASE_URL);
+            const [collecting, setCollecting] = useState(true);
+            const [sampleCount, setSampleCount] = useState(0);
+            
+            // Simulation State
+            const [isSimulating, setIsSimulating] = useState(false);
+            const [simParams, setSimParams] = useState({ latency: 30, jitter: 5, loss: 0 });
+
+            // Polling loop: collect browser metrics → send to backend → get analysis
+            useEffect(() => {
+                let active = true;
+                let timeoutId;
+
+                const poll = async () => {
+                    if (!active) return;
+                    
+                    try {
+                        setCollecting(true);
+                        const metrics = await collectBrowserMetrics(backendUrl);
+                        
+                        const response = await fetch(`${backendUrl}/api/metrics/browser`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(metrics)
+                        });
+                        
+                        if (response.ok) {
+                            const analysisData = await response.json();
+                            setData(analysisData);
+                            setSampleCount(prev => prev + 1);
+                        }
+                    } catch (e) {
+                        console.error("Collection cycle failed:", e);
+                    } finally {
+                        setCollecting(false);
+                        if (active) {
+                            timeoutId = setTimeout(poll, 3000); // Poll every 3s
+                        }
+                    }
+                };
+
+                poll();
+                return () => { active = false; clearTimeout(timeoutId); };
+            }, [backendUrl]);
+
+            // Simulation Logic
+            const computeSimulatedQoE = () => {
+                if (!data) return null;
+                const { latency, jitter, loss } = simParams;
+                const latencyScore = Math.max(0, 100 - latency / 2);
+                const jitterScore = Math.max(0, 100 - jitter * 2);
+                const lossScore = Math.max(0, 100 - loss * 10);
+                const snrScore = 75;
+                const score = (0.35 * latencyScore + 0.25 * jitterScore + 0.25 * lossScore + 0.15 * snrScore);
+                const label = score >= 75 ? 'Good' : score >= 45 ? 'Moderate' : 'Poor';
+                return { score, label };
+            };
+
+            const simResults = isSimulating ? computeSimulatedQoE() : null;
+
+            const fetchStory = async () => {
+                setLoadingStory(true);
+                try {
+                    const response = await fetch(`${backendUrl}/api/analyze/story`, { method: 'POST' });
+                    const resData = await response.json();
+                    setStory(resData.story);
+                } catch (e) {
+                    setStory("Failed to generate analysis. Check backend connection.");
+                }
+                setLoadingStory(false);
+            };
+
+            if (!data) return (
+                <div className="flex h-screen items-center justify-center flex-col space-y-4">
+                    <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                    <p className="text-blue-400 animate-pulse">Measuring your network...</p>
+                    <p className="text-xs text-slate-500">Pinging {backendUrl || 'server'} to measure latency, jitter & loss</p>
+                    <div className="glass p-4 rounded-xl max-w-sm text-center">
+                        <p className="text-xs text-slate-500 mb-2 uppercase font-bold tracking-widest">Backend URL</p>
+                        <input 
+                            type="text" 
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500 transition-colors"
+                            value={backendUrl}
+                            onChange={(e) => setBackendUrl(e.target.value)}
+                            placeholder="Enter Backend URL (e.g. https://...)"
+                        />
+                    </div>
+                </div>
+            );
+
+            const { current, qoe, causes } = data;
+
+            return (
+                <div className="max-w-7xl mx-auto px-6 py-12">
+                    <header className="flex justify-between items-center mb-12">
+                        <div>
+                            <h1 className="text-4xl font-bold accent-gradient tracking-tighter">NetPulse</h1>
+                            <p className="text-slate-500">WiFi Experience Intelligence Platform</p>
+                        </div>
+                        <div className="flex items-center space-x-6">
+                            <div className="flex items-center space-x-2">
+                                <div className={`w-2 h-2 rounded-full ${collecting ? 'bg-yellow-400 pulse' : 'bg-emerald-400'}`}></div>
+                                <span className="text-xs text-slate-500 uppercase tracking-widest font-bold">{sampleCount} samples</span>
+                            </div>
+                            <button 
+                                onClick={() => window.open(`${backendUrl}/api/export/json`, '_blank')}
+                                className="px-4 py-2 rounded-xl border border-slate-700 hover:border-slate-500 text-slate-400 text-xs font-bold transition-all uppercase tracking-widest"
+                            >
+                                Export Session
+                            </button>
+                            <div className="text-right">
+                                <p className="text-xs uppercase text-slate-500 font-bold tracking-widest">Connection State</p>
+                                <p className={`text-xl font-bold ${qoe.label === 'Good' ? 'text-emerald-400' : qoe.label === 'Moderate' ? 'text-orange-400' : 'text-red-400'}`}>
+                                    {qoe.label} ({Math.round(qoe.total_score)}%)
+                                </p>
+                            </div>
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center glass ${qoe.label === 'Good' ? 'border-emerald-500/30' : 'border-orange-500/30'}`}>
+                                <div className={`w-3 h-3 rounded-full ${qoe.label === 'Good' ? 'bg-emerald-500' : 'bg-orange-500'} pulse`}></div>
+                            </div>
+                        </div>
+                    </header>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        <div className="lg:col-span-2 space-y-8">
+                            <SignalCanvas 
+                                rssi={current.rssi_dbm} 
+                                jitter={current.jitter_ms} 
+                                packetLoss={current.packet_loss_pct} 
+                            />
+                            
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                                {[
+                                    { label: 'Latency', value: `${Math.round(current.latency_ms)} ms`, sub: 'RTT to Server' },
+                                    { label: 'Jitter', value: `${Math.round(current.jitter_ms)} ms`, sub: 'Variance' },
+                                    { label: 'Loss', value: `${current.packet_loss_pct}%`, sub: 'Packets' },
+                                    { label: 'Downlink', value: `${current.tx_rate_mbps} Mbps`, sub: current.band }
+                                ].map(stat => (
+                                    <div key={stat.label} className="glass p-5 rounded-2xl">
+                                        <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mb-1">{stat.label}</p>
+                                        <p className="text-2xl font-bold text-slate-200">{stat.value}</p>
+                                        <p className="text-xs text-slate-600 font-medium">{stat.sub}</p>
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className="glass p-8 rounded-3xl">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="text-xl font-bold text-slate-200 flex items-center">
+                                        <span className="w-2 h-2 rounded-full bg-blue-500 mr-3"></span>
+                                        "What If" Simulator
+                                    </h3>
+                                    <button 
+                                        onClick={() => setIsSimulating(!isSimulating)}
+                                        className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${isSimulating ? 'bg-red-500 hover:bg-red-400' : 'bg-blue-600 hover:bg-blue-500'}`}
+                                    >
+                                        {isSimulating ? 'Exit Simulator' : 'Start Simulation'}
+                                    </button>
+                                </div>
+                                
+                                {isSimulating ? (
+                                    <div className="space-y-6">
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                            {[
+                                                { label: 'Latency (ms)', key: 'latency', min: 0, max: 500 },
+                                                { label: 'Jitter (ms)', key: 'jitter', min: 0, max: 100 },
+                                                { label: 'Packet Loss (%)', key: 'loss', min: 0, max: 20 }
+                                            ].map(param => (
+                                                <div key={param.key} className="space-y-2">
+                                                    <div className="flex justify-between">
+                                                        <label className="text-xs text-slate-500 uppercase font-bold">{param.label}</label>
+                                                        <span className="text-xs text-blue-400 font-bold">{simParams[param.key]}</span>
+                                                    </div>
+                                                    <input 
+                                                        type="range" min={param.min} max={param.max} 
+                                                        value={simParams[param.key]}
+                                                        onChange={(e) => setSimParams({...simParams, [param.key]: parseFloat(e.target.value)})}
+                                                        className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+                                        <div className="p-6 rounded-2xl bg-blue-500/5 border border-blue-500/20 flex items-center justify-between">
+                                            <div>
+                                                <p className="text-xs text-slate-500 uppercase font-bold mb-1">Predicted Quality</p>
+                                                <p className={`text-2xl font-bold ${simResults.label === 'Good' ? 'text-emerald-400' : 'text-orange-400'}`}>
+                                                    {simResults.label} ({Math.round(simResults.score)}%)
+                                                </p>
+                                            </div>
+                                            <div className="text-right text-xs text-slate-500 max-w-[200px]">
+                                                Simulation based on your local weighted QoE model.
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="text-center py-6 text-slate-500 italic text-sm">
+                                        Enter simulation mode to predict network quality under different conditions.
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="glass p-8 rounded-3xl">
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="text-xl font-bold text-slate-200">WiFi Story Mode</h3>
+                                    <button 
+                                        onClick={fetchStory}
+                                        disabled={loadingStory}
+                                        className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all disabled:opacity-50"
+                                    >
+                                        {loadingStory ? 'Analyzing...' : 'Refresh Story'}
+                                    </button>
+                                </div>
+                                <div className="p-6 rounded-2xl bg-slate-900/50 border border-slate-800 italic text-slate-300 leading-relaxed text-lg">
+                                    "{story}"
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-8">
+                            <div className="glass p-6 rounded-3xl">
+                                <h3 className="text-lg font-bold text-slate-200 mb-6 flex items-center">
+                                    <span className="w-2 h-2 rounded-full bg-purple-500 mr-3"></span>
+                                    Application Profiler
+                                </h3>
+                                <div className="space-y-4">
+                                    {Object.entries(qoe.app_profiles).map(([app, status]) => (
+                                        <div key={app} className="flex justify-between items-center p-4 rounded-xl bg-slate-900/40">
+                                            <span className="font-medium text-slate-400">{app}</span>
+                                            <span className={`text-sm font-bold px-3 py-1 rounded-lg ${
+                                                status === 'Excellent' || status === 'Fluid' || status === 'Stable' 
+                                                ? 'bg-emerald-500/10 text-emerald-400' 
+                                                : 'bg-orange-500/10 text-orange-400'
+                                            }`}>
+                                                {status}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="glass p-6 rounded-3xl">
+                                <h3 className="text-lg font-bold text-slate-200 mb-6 flex items-center">
+                                    <span className="w-2 h-2 rounded-full bg-red-500 mr-3"></span>
+                                    Root Cause Analysis
+                                </h3>
+                                <div className="space-y-4">
+                                    {causes.length > 0 ? causes.map((cause, i) => (
+                                        <div key={i} className="p-4 rounded-xl bg-red-500/5 border border-red-500/20">
+                                            <p className="text-red-400 font-bold mb-1">{cause.type}</p>
+                                            <p className="text-xs text-slate-400 mb-3">{cause.evidence}</p>
+                                            <div className="p-2 rounded-lg bg-slate-900/50 text-xs text-emerald-400 border border-emerald-500/20">
+                                                <span className="font-bold mr-1 tracking-tighter uppercase">Mitigation:</span>
+                                                {cause.mitigation}
+                                            </div>
+                                        </div>
+                                    )) : (
+                                        <div className="text-center py-8">
+                                            <p className="text-slate-500 text-sm">No interference detected.</p>
+                                            <p className="text-xs text-slate-600 mt-1">Environment is stable.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<Dashboard />);
+    </script>
+</body>
+</html>
