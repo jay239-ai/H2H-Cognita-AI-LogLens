@@ -235,36 +235,124 @@
             return { pattern, burstCount: bursts, randomCount: randoms };
         }
 
-        // ─── Metrics Collector ───
+        // ─── Metrics Collector (Real Network, Not Backend) ───
         async function collectMetrics(url) {
+            // Ping CLOUDFLARE EDGE (always nearby) for real network latency
+            // NOT the backend (which could be in US/EU and shows 300ms+)
+            const PING_TARGETS = [
+                'https://www.gstatic.com/generate_204',  // Google (edge)
+                'https://1.1.1.1/cdn-cgi/trace',         // Cloudflare (edge)
+            ];
             const pings = [], fails = 0;
-            for (let i = 0; i < 5; i++) {
+            const PING_COUNT = 5;
+
+            for (let i = 0; i < PING_COUNT; i++) {
+                const target = PING_TARGETS[i % PING_TARGETS.length];
                 try {
-                    const c = new AbortController(); const t = setTimeout(() => c.abort(), 4000);
-                    const s = performance.now(); await fetch(`${url}/api/ping`, { signal: c.signal, cache: 'no-store' }); pings.push(performance.now() - s); clearTimeout(t);
+                    const c = new AbortController();
+                    const t = setTimeout(() => c.abort(), 4000);
+                    const s = performance.now();
+                    await fetch(target, { signal: c.signal, cache: 'no-store', mode: 'no-cors' });
+                    const elapsed = performance.now() - s;
+                    clearTimeout(t);
+                    pings.push(elapsed);
                 } catch (e) { fails++; }
             }
-            const avg = pings.length ? pings.reduce((a, b) => a + b, 0) / pings.length : 0;
-            const jit = pings.length > 1 ? pings.reduce((s, l) => s + Math.abs(l - avg), 0) / pings.length : 0;
+
             const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+
+            // Use navigator.connection RTT as primary if available (most accurate)
+            // Fall back to measured pings
+            const navRtt = conn?.rtt || 0;
+            const fetchAvg = pings.length ? pings.reduce((a, b) => a + b, 0) / pings.length : 0;
+
+            // Best latency: use navigator RTT if it's reasonable, otherwise use fetch timing
+            const latency = navRtt > 0 && navRtt < 1000 ? navRtt : fetchAvg;
+            const jitter = pings.length > 1 ? pings.reduce((s, l) => s + Math.abs(l - fetchAvg), 0) / pings.length : 0;
+            const packetLoss = (fails / PING_COUNT) * 100;
+
+            // Real downlink from browser API
+            const downlink = conn?.downlink || 0;
+            const effectiveType = conn?.effectiveType || '4g';
+            const connectionType = conn?.type || 'wifi';
+
+            // Performance timing from fetch entries
             let dns = 0, tls = 0, tcp = 0;
-            try { const e = performance.getEntriesByType('resource').filter(e => e.name.includes('/api/ping')); if (e.length) { const l = e[e.length - 1]; dns = l.domainLookupEnd - l.domainLookupStart; tcp = l.connectEnd - l.connectStart; tls = l.secureConnectionStart > 0 ? l.connectEnd - l.secureConnectionStart : 0; } } catch (e) { }
-            return { latency_ms: Math.round(avg * 100) / 100, jitter_ms: Math.round(jit * 100) / 100, packet_loss_pct: Math.round((fails / 5) * 10000) / 100, downlink_mbps: conn?.downlink || 1, rtt_ms: conn?.rtt || avg, effective_type: conn?.effectiveType || '4g', connection_type: conn?.type || 'wifi', dns_ms: Math.round(dns * 100) / 100, tls_ms: Math.round(tls * 100) / 100, tcp_ms: Math.round(tcp * 100) / 100 };
+            try {
+                const entries = performance.getEntriesByType('resource');
+                const recent = entries.filter(e => e.name.includes('gstatic.com') || e.name.includes('1.1.1.1'));
+                if (recent.length) {
+                    const last = recent[recent.length - 1];
+                    dns = Math.max(0, last.domainLookupEnd - last.domainLookupStart);
+                    tcp = Math.max(0, last.connectEnd - last.connectStart);
+                    tls = last.secureConnectionStart > 0 ? Math.max(0, last.connectEnd - last.secureConnectionStart) : 0;
+                }
+                // Clean up old entries to prevent memory leak
+                if (entries.length > 200) performance.clearResourceTimings();
+            } catch (e) { }
+
+            return {
+                latency_ms: Math.round(latency * 100) / 100,
+                jitter_ms: Math.round(jitter * 100) / 100,
+                packet_loss_pct: Math.round(packetLoss * 100) / 100,
+                downlink_mbps: downlink || 1,
+                rtt_ms: navRtt || fetchAvg,
+                effective_type: effectiveType,
+                connection_type: connectionType,
+                dns_ms: Math.round(dns * 100) / 100,
+                tls_ms: Math.round(tls * 100) / 100,
+                tcp_ms: Math.round(tcp * 100) / 100,
+            };
         }
 
-        // ─── Speed Test ───
+        // ─── Speed Test (Pure CDN, No Backend) ───
         async function runSpeedTest(url, onP) {
             const r = { download: 0, upload: 0 };
             onP({ phase: 'download', progress: 0 });
             try {
-                const files = ['https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js', 'https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js', 'https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js'];
-                let tot = 0; const st = performance.now();
-                for (let rd = 0; rd < 2; rd++) { const b = files.map(f => fetch(f + `?_=${Date.now()}_${Math.random()}`, { cache: 'no-store', mode: 'cors' }).then(async r => { const d = r.body.getReader(); let b = 0; while (true) { const { done, value } = await d.read(); if (done) break; b += value.length; } return b; }).catch(() => 0)); const s = await Promise.all(b); tot += s.reduce((a, b) => a + b, 0); onP({ phase: 'download', progress: ((rd + 1) / 2) * 95 }); }
-                r.download = Math.round(((tot * 8) / (1024 * 1024)) / ((performance.now() - st) / 1000) * 100) / 100; onP({ phase: 'download', progress: 100 });
+                // Download from multiple CDNs with cache-busting for real throughput
+                const files = [
+                    'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js',
+                    'https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js',
+                    'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js',
+                    'https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js',
+                    'https://cdn.jsdelivr.net/npm/moment@2.29.4/moment.min.js',
+                    'https://cdn.jsdelivr.net/npm/d3@7.8.5/dist/d3.min.js',
+                ];
+                let totalBytes = 0;
+                const start = performance.now();
+                const ROUNDS = 3; // More rounds for accuracy
+                for (let rd = 0; rd < ROUNDS; rd++) {
+                    const batch = files.map(f =>
+                        fetch(f + `?_=${Date.now()}_${Math.random()}`, { cache: 'no-store', mode: 'cors' })
+                            .then(async resp => {
+                                const reader = resp.body.getReader();
+                                let bytes = 0;
+                                while (true) { const { done, value } = await reader.read(); if (done) break; bytes += value.length; }
+                                return bytes;
+                            }).catch(() => 0)
+                    );
+                    const sizes = await Promise.all(batch);
+                    totalBytes += sizes.reduce((a, b) => a + b, 0);
+                    onP({ phase: 'download', progress: ((rd + 1) / ROUNDS) * 95 });
+                }
+                const elapsed = (performance.now() - start) / 1000;
+                r.download = Math.round(((totalBytes * 8) / (1024 * 1024)) / elapsed * 100) / 100;
+                onP({ phase: 'download', progress: 100 });
             } catch (e) { }
+
+            // Upload test via backend (real when deployed)
             onP({ phase: 'upload', progress: 0 });
-            try { const p = new Uint8Array(2 * 1024 * 1024); crypto.getRandomValues(p); const s = performance.now(); await fetch(`${url}/api/speedtest/upload`, { method: 'POST', body: p, headers: { 'Content-Type': 'application/octet-stream' } }); r.upload = Math.round(((p.length * 8) / (1024 * 1024)) / ((performance.now() - s) / 1000) * 100) / 100; onP({ phase: 'upload', progress: 100 }); } catch (e) { }
-            onP({ phase: 'done', progress: 100 }); return r;
+            try {
+                const payload = new Uint8Array(2 * 1024 * 1024);
+                crypto.getRandomValues(payload);
+                const start = performance.now();
+                await fetch(`${url}/api/speedtest/upload`, { method: 'POST', body: payload, headers: { 'Content-Type': 'application/octet-stream' } });
+                r.upload = Math.round(((payload.length * 8) / (1024 * 1024)) / ((performance.now() - start) / 1000) * 100) / 100;
+                onP({ phase: 'upload', progress: 100 });
+            } catch (e) { }
+            onP({ phase: 'done', progress: 100 });
+            return r;
         }
 
         // ─── Components ───
