@@ -45,6 +45,10 @@ app.mount("/static", StaticFiles(directory="frontend"), name="static")
 async def get_index():
     return FileResponse("frontend/index.html")
 
+@app.get("/favicon.svg")
+async def get_favicon():
+    return FileResponse("frontend/favicon.svg")
+
 # ─── Lightweight ping for latency measurement ───
 @app.get("/api/ping")
 async def ping():

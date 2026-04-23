@@ -7,7 +7,7 @@
     <title>NetPulse - WiFi Experience Intelligence</title>
     <meta name="description"
         content="Real-time WiFi network analyzer with live charts, speed tests, and intelligent diagnostics.">
-    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -190,7 +190,7 @@
 
         // ─── Notifications + Sound ───
         function requestNotifPerm() { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); }
-        function sendNotif(title, body) { if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body, icon: '/static/favicon.svg' }); }
+        function sendNotif(title, body) { if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body, icon: '/favicon.svg' }); }
 
         let audioCtx = null;
         function playAlertSound() {
@@ -456,7 +456,7 @@
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
                     <header className="flex flex-wrap justify-between items-center mb-5 gap-3 no-print">
                         <div className="flex items-center space-x-3">
-                            <img src="/static/favicon.svg" alt="" className="w-9 h-9" />
+                            <img src="/favicon.svg" alt="" className="w-9 h-9" />
                             <div><h1 className="text-2xl sm:text-3xl font-bold accent-gradient tracking-tighter">NetPulse</h1><p className="text-xs" style={{ color: 'var(--text-muted)' }}>WiFi Experience Intelligence</p></div>
                         </div>
                         <div className="flex items-center space-x-3 sm:space-x-5 mobile-stack">
