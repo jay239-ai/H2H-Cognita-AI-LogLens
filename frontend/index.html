@@ -448,6 +448,71 @@
             return <div className="glass p-5 rounded-3xl"><h3 className="text-lg font-bold mb-3 flex items-center" style={{ color: 'var(--text-primary)' }}><span className="w-2 h-2 rounded-full bg-yellow-500 mr-3"></span>Recommendations</h3><div className="space-y-2">{tips.slice(0, 4).map((tip, i) => <div key={i} className="flex items-start space-x-3 p-3 rounded-xl" style={{ background: 'var(--bg-card-solid)' }}><span className="text-lg flex-shrink-0">{tip.i}</span><span className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{tip.t}</span></div>)}</div></div>;
         };
 
+        // ─── Network Info Component ───
+        const NetworkInfo = () => {
+            const [info, setInfo] = useState(null);
+            useEffect(() => {
+                const fetchInfo = async () => {
+                    try {
+                        const resp = await fetch('https://ipapi.co/json/', { cache: 'no-store' });
+                        const data = await resp.json();
+                        setInfo(data);
+                    } catch (e) {
+                        // Fallback: try alternative API
+                        try {
+                            const resp = await fetch('https://ip-api.com/json/?fields=status,country,city,isp,query', { cache: 'no-store' });
+                            const data = await resp.json();
+                            setInfo({ ip: data.query, city: data.city, country_name: data.country, org: data.isp });
+                        } catch (e2) { }
+                    }
+                };
+                fetchInfo();
+            }, []);
+
+            const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+            const connType = conn?.type || 'unknown';
+            const effType = conn?.effectiveType || '4g';
+
+            const typeIcon = { wifi: '📶', cellular: '📱', ethernet: '🔌', bluetooth: '🔵' };
+            const typeLabel = { wifi: 'WiFi', cellular: 'Cellular', ethernet: 'Ethernet', bluetooth: 'Bluetooth', unknown: 'Unknown' };
+
+            return (
+                <div className="glass p-5 rounded-3xl">
+                    <h3 className="text-lg font-bold mb-3 flex items-center" style={{ color: 'var(--text-primary)' }}>
+                        <span className="w-2 h-2 rounded-full bg-sky-500 mr-3"></span>Network Info
+                    </h3>
+                    <div className="space-y-2.5">
+                        <div className="flex justify-between items-center p-2.5 rounded-xl" style={{ background: 'var(--bg-card-solid)' }}>
+                            <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Connection</span>
+                            <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>{typeIcon[connType] || '🌐'} {typeLabel[connType] || connType}</span>
+                        </div>
+                        <div className="flex justify-between items-center p-2.5 rounded-xl" style={{ background: 'var(--bg-card-solid)' }}>
+                            <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Speed Class</span>
+                            <span className={`text-xs font-bold px-2 py-0.5 rounded-lg ${effType === '4g' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-orange-500/10 text-orange-400'}`}>{effType.toUpperCase()}</span>
+                        </div>
+                        <div className="flex justify-between items-center p-2.5 rounded-xl" style={{ background: 'var(--bg-card-solid)' }}>
+                            <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Status</span>
+                            <span className="text-xs font-bold" style={{ color: navigator.onLine ? '#10B981' : '#EF4444' }}>{navigator.onLine ? '● Online' : '● Offline'}</span>
+                        </div>
+                        {info && <>
+                            <div className="flex justify-between items-center p-2.5 rounded-xl" style={{ background: 'var(--bg-card-solid)' }}>
+                                <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>ISP</span>
+                                <span className="text-xs font-bold text-right max-w-[140px] truncate" style={{ color: 'var(--text-primary)' }}>{info.org || info.isp || 'N/A'}</span>
+                            </div>
+                            <div className="flex justify-between items-center p-2.5 rounded-xl" style={{ background: 'var(--bg-card-solid)' }}>
+                                <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>Location</span>
+                                <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>{info.city}, {info.country_name || info.country}</span>
+                            </div>
+                            <div className="flex justify-between items-center p-2.5 rounded-xl" style={{ background: 'var(--bg-card-solid)' }}>
+                                <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>IP</span>
+                                <span className="text-xs font-mono" style={{ color: 'var(--text-secondary)' }}>{info.ip || info.query}</span>
+                            </div>
+                        </>}
+                    </div>
+                </div>
+            );
+        };
+
         const SpeedTest = ({ backendUrl }) => {
             const [running, setRunning] = useState(false), [results, setResults] = useState(null), [progress, setProgress] = useState({ phase: 'idle', progress: 0 });
             const run = async () => { setRunning(true); setResults(null); const r = await runSpeedTest(backendUrl, setProgress); setResults(r); setRunning(false); };
@@ -584,6 +649,7 @@
                                 <div className="glass p-5 rounded-3xl"><h3 className="text-lg font-bold mb-3 flex items-center" style={{ color: 'var(--text-primary)' }}><span className="w-2 h-2 rounded-full bg-purple-500 mr-3"></span>App Profiler</h3><div className="space-y-2">{Object.entries(qoe.app_profiles).map(([a, s]) => <div key={a} className="flex justify-between items-center p-2.5 rounded-xl" style={{ background: 'var(--bg-card-solid)' }}><span className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>{a}</span><span className={`text-xs font-bold px-3 py-1 rounded-lg ${['Excellent', 'Fluid', 'Stable'].includes(s) ? 'bg-emerald-500/10 text-emerald-400' : 'bg-orange-500/10 text-orange-400'}`}>{s}</span></div>)}</div></div>
                                 <div className="glass p-5 rounded-3xl"><h3 className="text-lg font-bold mb-3 flex items-center" style={{ color: 'var(--text-primary)' }}><span className="w-2 h-2 rounded-full bg-red-500 mr-3"></span>Root Causes</h3><div className="space-y-2">{causes.length > 0 ? causes.map((c, i) => <div key={i} className="p-3 rounded-xl bg-red-500/5 border border-red-500/20"><p className="text-red-400 font-bold text-sm mb-1">{c.type}</p><p className="text-xs mb-2" style={{ color: 'var(--text-secondary)' }}>{c.evidence}</p><div className="p-2 rounded-lg text-xs text-emerald-400 border border-emerald-500/20" style={{ background: 'var(--bg-card-solid)' }}><span className="font-bold mr-1 uppercase">Fix:</span>{c.mitigation}</div></div>) : <div className="text-center py-4"><p className="text-emerald-400 text-sm font-medium">All clear</p></div>}</div></div>
                                 <Recommendations data={data} />
+                                <NetworkInfo />
                                 <PerfTiming timing={data.timing} />
                                 <Timeline events={events} />
                             </div>
