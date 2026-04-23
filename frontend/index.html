@@ -246,12 +246,12 @@
             const PING_URL = 'https://www.cloudflare.com/cdn-cgi/trace';
             const pings = [];
             let fails = 0;
-            const PING_COUNT = 6; // 1 warm-up + 5 real
+            const PING_COUNT = 10; // 1 warm-up + 9 real
 
             for (let i = 0; i < PING_COUNT; i++) {
                 try {
                     const c = new AbortController();
-                    const t = setTimeout(() => c.abort(), 4000);
+                    const t = setTimeout(() => c.abort(), 1000);
                     const s = performance.now();
                     // Use cors mode so PerformanceResourceTiming has real data
                     await fetch(PING_URL + '?_=' + Date.now() + '_' + i, { signal: c.signal, cache: 'no-store', mode: 'cors' });
@@ -343,7 +343,7 @@
                 const start = performance.now();
                 await fetch('https://speed.cloudflare.com/__up', {
                     method: 'POST', body: payload,
-                    headers: { 'Content-Type': 'application/octet-stream' }
+                    headers: { 'CF-Speed-Test': '1', 'Content-Type': 'application/octet-stream' }
                 });
                 const elapsed = (performance.now() - start) / 1000;
                 if (elapsed > 0) {
@@ -610,6 +610,7 @@
             const [activeTab, setActiveTab] = useState('overview'), [totalBytes, setTotalBytes] = useState(saved?.totalBytes || 0);
             const [theme, setTheme] = useState(load('netpulse_theme') || 'dark'), [soundEnabled, setSoundEnabled] = useState(true);
             const [isSimulating, setIsSimulating] = useState(false), [simParams, setSimParams] = useState({ latency: 30, jitter: 5, loss: 0 });
+            const [lastMetrics, setLastMetrics] = useState(null);
             const prevQoE = useRef(null);
 
             // Theme
@@ -625,7 +626,7 @@
                 let active = true, tid;
                 const poll = async () => {
                     if (!active) return; try {
-                        const m = await collectMetrics(backendUrl); const r = await fetch(`${backendUrl}/api/metrics/browser`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(m) });
+                        const m = await collectMetrics(backendUrl); setLastMetrics(m); const r = await fetch(`${backendUrl}/api/metrics/browser`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(m) });
                         if (r.ok) {
                             const d = await r.json(); setData(d); setSampleCount(p => p + 1); setTotalBytes(p => p + 2048);
                             setHistory(p => { const n = [...p, { latency: Math.round(d.current.latency_ms), jitter: Math.round(d.current.jitter_ms * 10) / 10, loss: d.current.packet_loss_pct, throughput: d.current.tx_rate_mbps, qoe: Math.round(d.qoe.total_score) }]; return n.slice(-120); });
@@ -709,7 +710,7 @@
                                 <div className="glass p-5 rounded-3xl"><h3 className="text-lg font-bold mb-3 flex items-center" style={{ color: 'var(--text-primary)' }}><span className="w-2 h-2 rounded-full bg-red-500 mr-3"></span>Root Causes</h3><div className="space-y-2">{causes.length > 0 ? causes.map((c, i) => <div key={i} className="p-3 rounded-xl bg-red-500/5 border border-red-500/20"><p className="text-red-400 font-bold text-sm mb-1">{c.type}</p><p className="text-xs mb-2" style={{ color: 'var(--text-secondary)' }}>{c.evidence}</p><div className="p-2 rounded-lg text-xs text-emerald-400 border border-emerald-500/20" style={{ background: 'var(--bg-card-solid)' }}><span className="font-bold mr-1 uppercase">Fix:</span>{c.mitigation}</div></div>) : <div className="text-center py-4"><p className="text-emerald-400 text-sm font-medium">All clear</p></div>}</div></div>
                                 <Recommendations data={data} />
                                 <NetworkInfo />
-                                <PerfTiming timing={data.timing} />
+                                <PerfTiming timing={lastMetrics} />
                                 <Timeline events={events} />
                             </div>
                         </div>)}
