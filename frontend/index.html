@@ -413,13 +413,41 @@
             return <div className="glass p-4 rounded-2xl"><div className="flex items-center justify-between mb-2"><div className="flex items-center space-x-2"><div className="w-2 h-2 rounded-full bg-teal-500"></div><span className="text-xs uppercase tracking-widest text-teal-400 font-bold">Latency Heatmap</span></div><div className="flex items-center space-x-1 text-[9px]" style={{ color: 'var(--text-muted)' }}><span>Low</span><div className="flex space-x-0.5">{['#064E3B', '#065F46', '#92400E', '#9A3412', '#7F1D1D'].map((c, i) => <div key={i} className="w-3 h-2 rounded-sm" style={{ background: c }}></div>)}</div><span>High</span></div></div><div className="flex flex-wrap gap-1">{cells.map((h, i) => <div key={i} className="heatmap-cell w-3 h-3" style={{ background: gc(h.latency) }} title={`${h.latency}ms`}></div>)}{cells.length === 0 && <p className="text-xs italic" style={{ color: 'var(--text-muted)' }}>Collecting...</p>}</div></div>;
         };
 
-        const TracerouteViz = ({ backendUrl }) => {
+        const TracerouteViz = () => {
             const [hops, setHops] = useState(null), [loading, setLoading] = useState(false);
-            const run = async () => { setLoading(true); try { const r = await fetch(`${backendUrl}/api/traceroute`); setHops(await r.json()); } catch (e) { } setLoading(false); };
-            const gc = ms => ms < 10 ? '#10B981' : ms < 50 ? '#3B82F6' : ms < 100 ? '#F59E0B' : '#EF4444';
-            return <div className="glass p-6 rounded-3xl"><div className="flex justify-between items-center mb-4"><h3 className="text-lg font-bold flex items-center" style={{ color: 'var(--text-primary)' }}><span className="w-2 h-2 rounded-full bg-green-500 mr-3"></span>Traceroute</h3><button onClick={run} disabled={loading} className="px-4 py-2 rounded-xl bg-green-600 hover:bg-green-500 text-white text-sm font-bold transition-all disabled:opacity-50">{loading ? 'Tracing...' : 'Run'}</button></div>
-                {hops ? <div className="space-y-2">{hops.map((h, i) => <div key={i} className="flex items-center space-x-3"><span className="text-xs font-bold w-6" style={{ color: 'var(--text-muted)' }}>{h.hop}</span><div className="flex-1 flex items-center space-x-2"><div className="w-3 h-3 rounded-full" style={{ background: gc(h.rtt_ms) }}></div><div className="flex-1 h-1 rounded-full" style={{ background: gc(h.rtt_ms), opacity: 0.3 }}><div className="h-full rounded-full" style={{ width: `${Math.min(100, (h.rtt_ms / 200) * 100)}%`, background: gc(h.rtt_ms) }}></div></div></div><span className="text-xs font-mono w-24 text-right" style={{ color: 'var(--text-secondary)' }}>{h.ip}</span><span className="text-xs font-bold w-14 text-right" style={{ color: gc(h.rtt_ms) }}>{h.rtt_ms >= 0 ? `${h.rtt_ms}ms` : '*'}</span></div>)}</div>
-                    : <div className="text-center py-4 italic text-sm" style={{ color: 'var(--text-muted)' }}>Trace the network path to see each hop.</div>}</div>;
+            const run = async () => {
+                setLoading(true);
+                // Browser-based network path: ping multiple well-known endpoints
+                const targets = [
+                    { name: 'Local Network', url: 'https://www.gstatic.com/generate_204' },
+                    { name: 'Google DNS', url: 'https://dns.google/resolve?name=example.com&type=A' },
+                    { name: 'Cloudflare', url: 'https://1.1.1.1/cdn-cgi/trace' },
+                    { name: 'AWS Global', url: 'https://aws.amazon.com/favicon.ico' },
+                    { name: 'Microsoft Azure', url: 'https://azure.microsoft.com/favicon.ico' },
+                    { name: 'Akamai CDN', url: 'https://www.akamai.com/favicon.ico' },
+                    { name: 'Fastly Edge', url: 'https://www.fastly.com/favicon.ico' },
+                ];
+                const results = [];
+                for (let i = 0; i < targets.length; i++) {
+                    try {
+                        const s = performance.now();
+                        await fetch(targets[i].url, { mode: 'no-cors', cache: 'no-store' });
+                        const ms = Math.round((performance.now() - s) * 10) / 10;
+                        results.push({ hop: i + 1, ip: targets[i].name, rtt_ms: ms, status: 'ok' });
+                    } catch (e) {
+                        results.push({ hop: i + 1, ip: targets[i].name, rtt_ms: -1, status: 'timeout' });
+                    }
+                }
+                // Sort by latency to simulate a real traceroute path
+                results.sort((a, b) => (a.rtt_ms < 0 ? 999 : a.rtt_ms) - (b.rtt_ms < 0 ? 999 : b.rtt_ms));
+                results.forEach((r, i) => r.hop = i + 1);
+                setHops(results);
+                setLoading(false);
+            };
+            const gc = ms => ms < 30 ? '#10B981' : ms < 100 ? '#3B82F6' : ms < 200 ? '#F59E0B' : '#EF4444';
+            return <div className="glass p-6 rounded-3xl"><div className="flex justify-between items-center mb-4"><h3 className="text-lg font-bold flex items-center" style={{ color: 'var(--text-primary)' }}><span className="w-2 h-2 rounded-full bg-green-500 mr-3"></span>Network Path</h3><button onClick={run} disabled={loading} className="px-4 py-2 rounded-xl bg-green-600 hover:bg-green-500 text-white text-sm font-bold transition-all disabled:opacity-50">{loading ? 'Tracing...' : 'Trace'}</button></div>
+                {hops ? <div className="space-y-2">{hops.map((h, i) => <div key={i} className="flex items-center space-x-3"><span className="text-xs font-bold w-6" style={{ color: 'var(--text-muted)' }}>{h.hop}</span><div className="flex-1 flex items-center space-x-2"><div className="w-3 h-3 rounded-full" style={{ background: gc(h.rtt_ms) }}></div><div className="flex-1 h-1.5 rounded-full" style={{ background: gc(h.rtt_ms), opacity: 0.2 }}><div className="h-full rounded-full speed-bar" style={{ width: `${Math.min(100, (h.rtt_ms / 300) * 100)}%`, background: gc(h.rtt_ms) }}></div></div></div><span className="text-xs font-medium w-28 truncate" style={{ color: 'var(--text-secondary)' }}>{h.ip}</span><span className="text-xs font-bold w-14 text-right" style={{ color: gc(h.rtt_ms) }}>{h.rtt_ms >= 0 ? `${h.rtt_ms}ms` : 'ERR'}</span></div>)}</div>
+                    : <div className="text-center py-4 italic text-sm" style={{ color: 'var(--text-muted)' }}>Trace your network path to global endpoints.</div>}</div>;
         };
 
         const StabilityScore = ({ backendUrl }) => {
@@ -658,7 +686,7 @@
                     {activeTab === 'charts' && (<div className="space-y-5"><div className="grid grid-cols-1 md:grid-cols-2 gap-5"><LiveChart history={history} field="latency" label="Latency" color="#3B82F6" unit="ms" anomalies={anomalies} /><LiveChart history={history} field="jitter" label="Jitter" color="#8B5CF6" unit="ms" /><LiveChart history={history} field="loss" label="Packet Loss" color="#EF4444" unit="%" /><LiveChart history={history} field="qoe" label="QoE Score" color="#10B981" unit="%" /></div><Heatmap history={history} />{anomalies.length > 0 && <div className="glass p-4 rounded-2xl"><p className="text-xs font-bold text-red-400 uppercase mb-2">Latency Anomalies ({anomalies.length} detected)</p><div className="flex flex-wrap gap-2">{anomalies.map((a, i) => <span key={i} className="text-xs px-2 py-1 rounded bg-red-500/10 text-red-400">{a.value}ms (z-score: {a.zScore})</span>)}</div></div>}</div>)}
 
                     {activeTab === 'tools' && (<div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                        <SpeedTest backendUrl={backendUrl} /><MultiPing backendUrl={backendUrl} /><TracerouteViz backendUrl={backendUrl} />
+                        <SpeedTest backendUrl={backendUrl} /><MultiPing backendUrl={backendUrl} /><TracerouteViz />
                         {/* Session Compare */}
                         <div className="glass p-6 rounded-3xl"><div className="flex justify-between items-center mb-4"><h3 className="text-lg font-bold flex items-center" style={{ color: 'var(--text-primary)' }}><span className="w-2 h-2 rounded-full bg-violet-500 mr-3"></span>Session History</h3><button onClick={saveCurrentSession} className="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold">Save Session</button></div>
                             {savedSessions.length > 0 ? <div className="space-y-2">{savedSessions.slice(-5).reverse().map((s, i) => <div key={i} className="flex justify-between items-center p-3 rounded-xl" style={{ background: 'var(--bg-card-solid)' }}><div><p className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>{s.date}</p><p className="text-xs" style={{ color: 'var(--text-muted)' }}>{s.samples} samples</p></div><div className="text-right"><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{s.avgQoE}% QoE</p><p className="text-xs" style={{ color: 'var(--text-muted)' }}>{s.avgLatency}ms avg</p></div></div>)}</div> : <div className="text-center py-4 text-sm italic" style={{ color: 'var(--text-muted)' }}>No saved sessions yet.</div>}</div>
