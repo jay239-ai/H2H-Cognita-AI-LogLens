@@ -1,422 +1,518 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NetPulse — WiFi Experience Intelligence</title>
+    <title>NetPulse - WiFi Experience Intelligence</title>
+    <meta name="description"
+        content="Real-time WiFi network analyzer with live charts, speed tests, and intelligent diagnostics.">
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet">
     <style>
-        body { font-family: 'Space Grotesk', sans-serif; background: #05070A; color: #E2E8F0; }
-        .glass { background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); }
-        .accent-gradient { background: linear-gradient(135deg, #3B82F6, #8B5CF6); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-        .waveform-container { position: relative; height: 300px; width: 100%; overflow: hidden; border-radius: 1rem; }
-        canvas { display: block; width: 100%; height: 100%; }
-        .pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
-    </style>
-</head>
-<body>
-    <div id="root"></div>
-
-    <script type="text/babel">
-        const { useState, useEffect, useRef, useCallback } = React;
-
-        // 🚀 CONFIGURE YOUR BACKEND URL HERE
-        const API_BASE_URL = window.location.hostname === 'localhost' 
-            ? '' 
-            : 'https://your-netpulse-backend.onrender.com'; // 👈 UPDATE THIS AFTER RENDER DEPLOY
-
-        // ─── Browser Metrics Collector ───
-        async function collectBrowserMetrics(backendUrl) {
-            const pingUrl = `${backendUrl}/api/ping`;
-            const PING_COUNT = 5;
-            const TIMEOUT = 4000;
-            
-            let latencies = [];
-            let failures = 0;
-
-            // Run multiple pings to measure latency + jitter + loss
-            for (let i = 0; i < PING_COUNT; i++) {
-                try {
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), TIMEOUT);
-                    
-                    const start = performance.now();
-                    await fetch(pingUrl, { 
-                        signal: controller.signal,
-                        cache: 'no-store',
-                        mode: 'cors'
-                    });
-                    const elapsed = performance.now() - start;
-                    clearTimeout(timeoutId);
-                    latencies.push(elapsed);
-                } catch (e) {
-                    failures++;
-                }
-            }
-
-            // Calculate metrics
-            const avgLatency = latencies.length > 0 
-                ? latencies.reduce((a, b) => a + b, 0) / latencies.length 
-                : 0;
-            
-            // Jitter = average deviation from mean
-            const jitter = latencies.length > 1
-                ? latencies.reduce((sum, l) => sum + Math.abs(l - avgLatency), 0) / latencies.length
-                : 0;
-            
-            const packetLoss = (failures / PING_COUNT) * 100;
-
-            // Navigator Connection API (where available)
-            const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-            const downlink = conn?.downlink || 0;
-            const rtt = conn?.rtt || avgLatency;
-            const effectiveType = conn?.effectiveType || '4g';
-            const connectionType = conn?.type || 'wifi';
-
-            // Throughput estimation: download a resource and measure speed
-            let throughput = downlink;
-            if (!downlink && latencies.length > 0) {
-                // Rough estimate from ping response size / time
-                throughput = 1; // fallback 1 Mbps
-            }
-
-            return {
-                latency_ms: Math.round(avgLatency * 100) / 100,
-                jitter_ms: Math.round(jitter * 100) / 100,
-                packet_loss_pct: Math.round(packetLoss * 100) / 100,
-                downlink_mbps: throughput,
-                rtt_ms: rtt,
-                effective_type: effectiveType,
-                connection_type: connectionType
-            };
+        :root {
+            --bg-primary: #05070A;
+            --bg-card: rgba(15, 23, 42, 0.6);
+            --bg-card-solid: #0F172A;
+            --text-primary: #E2E8F0;
+            --text-secondary: #94A3B8;
+            --text-muted: #475569;
+            --border: rgba(255, 255, 255, 0.1);
         }
 
-        const SignalCanvas = ({ rssi, jitter, packetLoss }) => {
-            const canvasRef = useRef(null);
-            
-            useEffect(() => {
-                const canvas = canvasRef.current;
-                const ctx = canvas.getContext('2d');
-                let animationFrameId;
-                let offset = 0;
+        [data-theme="light"] {
+            --bg-primary: #F1F5F9;
+            --bg-card: rgba(255, 255, 255, 0.8);
+            --bg-card-solid: #FFFFFF;
+            --text-primary: #0F172A;
+            --text-secondary: #475569;
+            --text-muted: #94A3B8;
+            --border: rgba(0, 0, 0, 0.1);
+        }
 
-                const render = () => {
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    const width = canvas.width;
-                    const height = canvas.height;
-                    const midY = height / 2;
-                    
-                    const amplitude = Math.max(10, (100 + rssi) * 2);
-                    const jitterEffect = jitter * 0.05;
-                    const saturation = 100 - packetLoss * 10;
-                    
-                    ctx.beginPath();
-                    ctx.lineWidth = 3;
-                    ctx.strokeStyle = `hsla(${210 + (packetLoss * 5)}, ${saturation}%, 60%, 0.8)`;
-                    
-                    for (let x = 0; x < width; x++) {
-                        const freq = 0.01 + (jitter * 0.001);
-                        const turbulence = Math.sin(x * 0.05 + offset * 2) * jitterEffect;
-                        const y = midY + 
-                                 Math.sin(x * freq + offset) * amplitude +
-                                 Math.cos(x * freq * 2.5 + offset * 1.5) * (amplitude / 3) +
-                                 turbulence;
-                        if (x === 0) ctx.moveTo(x, y);
-                        else ctx.lineTo(x, y);
-                    }
-                    ctx.stroke();
-                    offset += 0.05 + (jitter * 0.002);
-                    animationFrameId = requestAnimationFrame(render);
-                };
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            margin: 0;
+            transition: background 0.3s, color 0.3s;
+        }
 
-                render();
-                return () => cancelAnimationFrame(animationFrameId);
-            }, [rssi, jitter, packetLoss]);
+        .glass {
+            background: var(--bg-card);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--border);
+            transition: background 0.3s;
+        }
 
-            return (
-                <div className="waveform-container glass">
-                    <canvas ref={canvasRef} width={800} height={300} />
-                    <div className="absolute top-4 left-6 flex items-center space-x-2">
-                        <div className={`w-2 h-2 rounded-full bg-blue-500 ${jitter > 20 ? 'pulse' : ''}`}></div>
-                        <span className="text-xs uppercase tracking-widest text-blue-400 font-bold">Live Signal Waveform</span>
-                    </div>
-                </div>
-            );
+        .accent-gradient {
+            background: linear-gradient(135deg, #3B82F6, #8B5CF6);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .waveform-container {
+            position: relative;
+            height: 180px;
+            width: 100%;
+            overflow: hidden;
+            border-radius: 1rem;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        .pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: .5;
+            }
+        }
+
+        .speed-bar {
+            transition: width 0.5s ease-out;
+        }
+
+        ::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+
+        .tab-active {
+            border-bottom: 2px solid #3B82F6;
+            color: #3B82F6;
+        }
+
+        .gauge-ring {
+            transition: stroke-dashoffset 1s ease-out;
+        }
+
+        @keyframes gauge-glow {
+
+            0%,
+            100% {
+                filter: drop-shadow(0 0 6px rgba(59, 130, 246, 0.3));
+            }
+
+            50% {
+                filter: drop-shadow(0 0 10px rgba(59, 130, 246, 0.6));
+            }
+        }
+
+        .gauge-glow {
+            animation: gauge-glow 3s ease-in-out infinite;
+        }
+
+        .heatmap-cell {
+            transition: background 0.3s;
+            border-radius: 3px;
+        }
+
+        .anomaly-flash {
+            animation: anomalyFlash 1s ease;
+        }
+
+        @keyframes anomalyFlash {
+            0% {
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5)
+            }
+
+            70% {
+                box-shadow: 0 0 0 8px rgba(239, 68, 68, 0)
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(239, 68, 68, 0)
+            }
+        }
+
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+
+            body {
+                background: white !important;
+                color: black !important;
+            }
+
+            .glass {
+                background: white !important;
+                border: 1px solid #ddd !important;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .mobile-stack {
+                flex-direction: column !important;
+            }
+
+            .mobile-full {
+                grid-template-columns: 1fr !important;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+        const API_BASE_URL = window.location.hostname === 'localhost' ? '' : 'https://your-netpulse-backend.onrender.com';
+
+        // ─── Persistence ───
+        const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } };
+        const load = (k) => { try { const d = localStorage.getItem(k); return d ? JSON.parse(d) : null; } catch (e) { return null; } };
+
+        // ─── Notifications + Sound ───
+        function requestNotifPerm() { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); }
+        function sendNotif(title, body) { if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body, icon: '/static/favicon.svg' }); }
+
+        let audioCtx = null;
+        function playAlertSound() {
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+                osc.connect(gain); gain.connect(audioCtx.destination);
+                osc.frequency.value = 440; osc.type = 'sine';
+                gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.5);
+            } catch (e) { }
+        }
+
+        // ─── Anomaly Detection ───
+        function detectAnomalies(history) {
+            if (history.length < 10) return [];
+            const recent = history.slice(-30);
+            const latencies = recent.map(h => h.latency);
+            const mean = latencies.reduce((a, b) => a + b, 0) / latencies.length;
+            const std = Math.sqrt(latencies.reduce((s, l) => s + Math.pow(l - mean, 2), 0) / latencies.length);
+            const anomalies = [];
+            recent.forEach((h, i) => {
+                const z = std > 0 ? Math.abs(h.latency - mean) / std : 0;
+                if (z > 2) anomalies.push({ index: history.length - recent.length + i, value: h.latency, zScore: z.toFixed(1) });
+            });
+            return anomalies;
+        }
+
+        // ─── Loss Pattern Analysis ───
+        function analyzeLossPattern(history) {
+            const losses = history.slice(-60).map(h => h.loss > 0 ? 1 : 0);
+            if (losses.length < 10) return { pattern: 'Insufficient data', burstCount: 0, randomCount: 0 };
+            let bursts = 0, randoms = 0, consecutive = 0;
+            for (let i = 0; i < losses.length; i++) {
+                if (losses[i]) { consecutive++; }
+                else { if (consecutive >= 3) bursts++; else if (consecutive > 0) randoms += consecutive; consecutive = 0; }
+            }
+            if (consecutive >= 3) bursts++; else if (consecutive > 0) randoms += consecutive;
+            const total = bursts + randoms;
+            const pattern = total === 0 ? 'No Loss' : bursts > randoms ? 'Burst Loss' : randoms > bursts ? 'Random Loss' : 'Mixed';
+            return { pattern, burstCount: bursts, randomCount: randoms };
+        }
+
+        // ─── Metrics Collector ───
+        async function collectMetrics(url) {
+            const pings = [], fails = 0;
+            for (let i = 0; i < 5; i++) {
+                try {
+                    const c = new AbortController(); const t = setTimeout(() => c.abort(), 4000);
+                    const s = performance.now(); await fetch(`${url}/api/ping`, { signal: c.signal, cache: 'no-store' }); pings.push(performance.now() - s); clearTimeout(t);
+                } catch (e) { fails++; }
+            }
+            const avg = pings.length ? pings.reduce((a, b) => a + b, 0) / pings.length : 0;
+            const jit = pings.length > 1 ? pings.reduce((s, l) => s + Math.abs(l - avg), 0) / pings.length : 0;
+            const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+            let dns = 0, tls = 0, tcp = 0;
+            try { const e = performance.getEntriesByType('resource').filter(e => e.name.includes('/api/ping')); if (e.length) { const l = e[e.length - 1]; dns = l.domainLookupEnd - l.domainLookupStart; tcp = l.connectEnd - l.connectStart; tls = l.secureConnectionStart > 0 ? l.connectEnd - l.secureConnectionStart : 0; } } catch (e) { }
+            return { latency_ms: Math.round(avg * 100) / 100, jitter_ms: Math.round(jit * 100) / 100, packet_loss_pct: Math.round((fails / 5) * 10000) / 100, downlink_mbps: conn?.downlink || 1, rtt_ms: conn?.rtt || avg, effective_type: conn?.effectiveType || '4g', connection_type: conn?.type || 'wifi', dns_ms: Math.round(dns * 100) / 100, tls_ms: Math.round(tls * 100) / 100, tcp_ms: Math.round(tcp * 100) / 100 };
+        }
+
+        // ─── Speed Test ───
+        async function runSpeedTest(url, onP) {
+            const r = { download: 0, upload: 0 };
+            onP({ phase: 'download', progress: 0 });
+            try {
+                const files = ['https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js', 'https://cdn.jsdelivr.net/npm/react-dom@18.2.0/umd/react-dom.production.min.js', 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js', 'https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js'];
+                let tot = 0; const st = performance.now();
+                for (let rd = 0; rd < 2; rd++) { const b = files.map(f => fetch(f + `?_=${Date.now()}_${Math.random()}`, { cache: 'no-store', mode: 'cors' }).then(async r => { const d = r.body.getReader(); let b = 0; while (true) { const { done, value } = await d.read(); if (done) break; b += value.length; } return b; }).catch(() => 0)); const s = await Promise.all(b); tot += s.reduce((a, b) => a + b, 0); onP({ phase: 'download', progress: ((rd + 1) / 2) * 95 }); }
+                r.download = Math.round(((tot * 8) / (1024 * 1024)) / ((performance.now() - st) / 1000) * 100) / 100; onP({ phase: 'download', progress: 100 });
+            } catch (e) { }
+            onP({ phase: 'upload', progress: 0 });
+            try { const p = new Uint8Array(2 * 1024 * 1024); crypto.getRandomValues(p); const s = performance.now(); await fetch(`${url}/api/speedtest/upload`, { method: 'POST', body: p, headers: { 'Content-Type': 'application/octet-stream' } }); r.upload = Math.round(((p.length * 8) / (1024 * 1024)) / ((performance.now() - s) / 1000) * 100) / 100; onP({ phase: 'upload', progress: 100 }); } catch (e) { }
+            onP({ phase: 'done', progress: 100 }); return r;
+        }
+
+        // ─── Components ───
+        const QoEGauge = ({ score, label }) => {
+            const r = 52, c = 2 * Math.PI * r, o = c - (score / 100) * c, cl = label === 'Good' ? '#10B981' : label === 'Moderate' ? '#F59E0B' : '#EF4444';
+            return <div className="flex flex-col items-center"><svg width="120" height="120" className="gauge-glow"><circle cx="60" cy="60" r={r} fill="none" stroke="var(--bg-card-solid)" strokeWidth="8" /><circle cx="60" cy="60" r={r} fill="none" stroke={cl} strokeWidth="8" strokeDasharray={c} strokeDashoffset={o} strokeLinecap="round" className="gauge-ring" transform="rotate(-90 60 60)" /><text x="60" y="55" textAnchor="middle" fill={cl} fontSize="26" fontWeight="700" fontFamily="Space Grotesk">{Math.round(score)}</text><text x="60" y="73" textAnchor="middle" fill="var(--text-muted)" fontSize="10" fontWeight="600" fontFamily="Space Grotesk">{label}</text></svg></div>;
         };
 
-        const Dashboard = () => {
-            const [data, setData] = useState(null);
-            const [story, setStory] = useState("Collecting signal intelligence...");
-            const [loadingStory, setLoadingStory] = useState(false);
-            const [backendUrl, setBackendUrl] = useState(API_BASE_URL);
-            const [collecting, setCollecting] = useState(true);
-            const [sampleCount, setSampleCount] = useState(0);
-            
-            // Simulation State
-            const [isSimulating, setIsSimulating] = useState(false);
-            const [simParams, setSimParams] = useState({ latency: 30, jitter: 5, loss: 0 });
+        const Sparkline = ({ data, color = '#3B82F6', w = 55, h = 18 }) => {
+            if (!data || data.length < 2) return null; const mn = Math.min(...data), mx = Math.max(...data), rg = mx - mn || 1;
+            const pts = data.map((v, i) => `${(i / (data.length - 1)) * w},${h - ((v - mn) / rg) * h}`).join(' ');
+            return <svg width={w} height={h} className="inline-block align-middle"><polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" /></svg>;
+        };
 
-            // Polling loop: collect browser metrics → send to backend → get analysis
+        const LiveChart = ({ history, field, label, color, unit, anomalies = [] }) => {
+            const ref = useRef(null), chart = useRef(null);
             useEffect(() => {
-                let active = true;
-                let timeoutId;
-
-                const poll = async () => {
-                    if (!active) return;
-                    
-                    try {
-                        setCollecting(true);
-                        const metrics = await collectBrowserMetrics(backendUrl);
-                        
-                        const response = await fetch(`${backendUrl}/api/metrics/browser`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(metrics)
-                        });
-                        
-                        if (response.ok) {
-                            const analysisData = await response.json();
-                            setData(analysisData);
-                            setSampleCount(prev => prev + 1);
-                        }
-                    } catch (e) {
-                        console.error("Collection cycle failed:", e);
-                    } finally {
-                        setCollecting(false);
-                        if (active) {
-                            timeoutId = setTimeout(poll, 3000); // Poll every 3s
-                        }
+                if (!ref.current) return; if (chart.current) chart.current.destroy(); const ctx = ref.current.getContext('2d');
+                chart.current = new Chart(ctx, {
+                    type: 'line', data: { labels: [], datasets: [{ label, data: [], borderColor: color, backgroundColor: color + '20', fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2 }] },
+                    options: {
+                        responsive: true, maintainAspectRatio: false, animation: { duration: 200 }, plugins: { legend: { display: false }, tooltip: { backgroundColor: 'rgba(15,23,42,0.9)', borderColor: color, borderWidth: 1 } },
+                        scales: { x: { display: true, grid: { color: 'rgba(255,255,255,0.03)' }, ticks: { color: 'var(--text-muted)', font: { size: 9 }, maxTicksLimit: 6 } }, y: { display: true, grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'var(--text-muted)', font: { size: 10 }, callback: v => `${v}${unit}` }, beginAtZero: true } }
                     }
+                });
+                return () => { if (chart.current) chart.current.destroy(); };
+            }, []);
+            useEffect(() => {
+                if (!chart.current || !history.length) return; const c = chart.current, s = history.slice(-60);
+                c.data.labels = s.map((_, i) => { const t = (s.length - 1 - i) * 3; return t === 0 ? 'now' : `-${t}s`; });
+                c.data.datasets[0].data = s.map(h => h[field]);
+                // Highlight anomalies with red points
+                const aIdx = new Set(anomalies.map(a => a.index));
+                c.data.datasets[0].pointRadius = s.map((_, i) => aIdx.has(history.length - s.length + i) ? 5 : 0);
+                c.data.datasets[0].pointBackgroundColor = s.map((_, i) => aIdx.has(history.length - s.length + i) ? '#EF4444' : color);
+                c.update('none');
+            }, [history, anomalies]);
+            return <div className="glass rounded-2xl p-4" style={{ height: '180px' }}><div className="flex items-center justify-between mb-2"><div className="flex items-center space-x-2"><div className="w-2 h-2 rounded-full" style={{ background: color }}></div><span className="text-xs uppercase tracking-widest font-bold" style={{ color }}>{label}</span></div><span className="text-xs font-mono" style={{ color: 'var(--text-muted)' }}>{history.length > 0 ? `${Math.round(history[history.length - 1]?.[field] || 0)} ${unit}` : ''}</span></div><div style={{ height: '130px' }}><canvas ref={ref}></canvas></div></div>;
+        };
+
+        const SignalCanvas = ({ rssi, jitter, packetLoss }) => {
+            const ref = useRef(null);
+            useEffect(() => {
+                const c = ref.current, ctx = c.getContext('2d'); let id, off = 0;
+                const render = () => {
+                    ctx.clearRect(0, 0, c.width, c.height); const w = c.width, h = c.height, m = h / 2, a = Math.max(10, (100 + rssi) * 2), j = jitter * 0.05, s = 100 - packetLoss * 10;
+                    ctx.beginPath(); ctx.lineWidth = 3; ctx.strokeStyle = `hsla(${210 + (packetLoss * 5)},${s}%,60%,0.8)`;
+                    for (let x = 0; x < w; x++) { const f = 0.01 + (jitter * 0.001), t = Math.sin(x * 0.05 + off * 2) * j, y = m + Math.sin(x * f + off) * a + Math.cos(x * f * 2.5 + off * 1.5) * (a / 3) + t; x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); } ctx.stroke(); off += 0.05 + (jitter * 0.002); id = requestAnimationFrame(render);
                 };
+                render(); return () => cancelAnimationFrame(id);
+            }, [rssi, jitter, packetLoss]);
+            return <div className="waveform-container glass"><canvas ref={ref} width={800} height={180} /><div className="absolute top-3 left-5 flex items-center space-x-2"><div className={`w-2 h-2 rounded-full bg-blue-500 ${jitter > 20 ? 'pulse' : ''}`}></div><span className="text-xs uppercase tracking-widest text-blue-400 font-bold">Live Signal</span></div></div>;
+        };
 
-                poll();
-                return () => { active = false; clearTimeout(timeoutId); };
-            }, [backendUrl]);
+        const Heatmap = ({ history }) => {
+            const cells = history.slice(-60);
+            const gc = l => l < 30 ? '#064E3B' : l < 60 ? '#065F46' : l < 100 ? '#92400E' : l < 200 ? '#9A3412' : '#7F1D1D';
+            return <div className="glass p-4 rounded-2xl"><div className="flex items-center justify-between mb-2"><div className="flex items-center space-x-2"><div className="w-2 h-2 rounded-full bg-teal-500"></div><span className="text-xs uppercase tracking-widest text-teal-400 font-bold">Latency Heatmap</span></div><div className="flex items-center space-x-1 text-[9px]" style={{ color: 'var(--text-muted)' }}><span>Low</span><div className="flex space-x-0.5">{['#064E3B', '#065F46', '#92400E', '#9A3412', '#7F1D1D'].map((c, i) => <div key={i} className="w-3 h-2 rounded-sm" style={{ background: c }}></div>)}</div><span>High</span></div></div><div className="flex flex-wrap gap-1">{cells.map((h, i) => <div key={i} className="heatmap-cell w-3 h-3" style={{ background: gc(h.latency) }} title={`${h.latency}ms`}></div>)}{cells.length === 0 && <p className="text-xs italic" style={{ color: 'var(--text-muted)' }}>Collecting...</p>}</div></div>;
+        };
 
-            // Simulation Logic
-            const computeSimulatedQoE = () => {
-                if (!data) return null;
-                const { latency, jitter, loss } = simParams;
-                const latencyScore = Math.max(0, 100 - latency / 2);
-                const jitterScore = Math.max(0, 100 - jitter * 2);
-                const lossScore = Math.max(0, 100 - loss * 10);
-                const snrScore = 75;
-                const score = (0.35 * latencyScore + 0.25 * jitterScore + 0.25 * lossScore + 0.15 * snrScore);
-                const label = score >= 75 ? 'Good' : score >= 45 ? 'Moderate' : 'Poor';
-                return { score, label };
+        const TracerouteViz = ({ backendUrl }) => {
+            const [hops, setHops] = useState(null), [loading, setLoading] = useState(false);
+            const run = async () => { setLoading(true); try { const r = await fetch(`${backendUrl}/api/traceroute`); setHops(await r.json()); } catch (e) { } setLoading(false); };
+            const gc = ms => ms < 10 ? '#10B981' : ms < 50 ? '#3B82F6' : ms < 100 ? '#F59E0B' : '#EF4444';
+            return <div className="glass p-6 rounded-3xl"><div className="flex justify-between items-center mb-4"><h3 className="text-lg font-bold flex items-center" style={{ color: 'var(--text-primary)' }}><span className="w-2 h-2 rounded-full bg-green-500 mr-3"></span>Traceroute</h3><button onClick={run} disabled={loading} className="px-4 py-2 rounded-xl bg-green-600 hover:bg-green-500 text-white text-sm font-bold transition-all disabled:opacity-50">{loading ? 'Tracing...' : 'Run'}</button></div>
+                {hops ? <div className="space-y-2">{hops.map((h, i) => <div key={i} className="flex items-center space-x-3"><span className="text-xs font-bold w-6" style={{ color: 'var(--text-muted)' }}>{h.hop}</span><div className="flex-1 flex items-center space-x-2"><div className="w-3 h-3 rounded-full" style={{ background: gc(h.rtt_ms) }}></div><div className="flex-1 h-1 rounded-full" style={{ background: gc(h.rtt_ms), opacity: 0.3 }}><div className="h-full rounded-full" style={{ width: `${Math.min(100, (h.rtt_ms / 200) * 100)}%`, background: gc(h.rtt_ms) }}></div></div></div><span className="text-xs font-mono w-24 text-right" style={{ color: 'var(--text-secondary)' }}>{h.ip}</span><span className="text-xs font-bold w-14 text-right" style={{ color: gc(h.rtt_ms) }}>{h.rtt_ms >= 0 ? `${h.rtt_ms}ms` : '*'}</span></div>)}</div>
+                    : <div className="text-center py-4 italic text-sm" style={{ color: 'var(--text-muted)' }}>Trace the network path to see each hop.</div>}</div>;
+        };
+
+        const StabilityScore = ({ backendUrl }) => {
+            const [data, setData] = useState(null);
+            useEffect(() => { const f = async () => { try { const r = await fetch(`${backendUrl}/api/stability`); setData(await r.json()); } catch (e) { } }; f(); const id = setInterval(f, 10000); return () => clearInterval(id); }, []);
+            if (!data) return null;
+            const cl = data.stability >= 85 ? '#10B981' : data.stability >= 65 ? '#3B82F6' : data.stability >= 40 ? '#F59E0B' : '#EF4444';
+            return <div className="glass p-4 rounded-2xl text-center"><p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Stability</p><p className="text-2xl font-bold" style={{ color: cl }}>{data.stability}%</p><p className="text-xs font-medium" style={{ color: cl }}>{data.label}</p></div>;
+        };
+
+        const LossPattern = ({ history }) => {
+            const analysis = analyzeLossPattern(history);
+            const cl = analysis.pattern === 'No Loss' ? '#10B981' : analysis.pattern === 'Burst Loss' ? '#EF4444' : '#F59E0B';
+            return <div className="glass p-4 rounded-2xl"><p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>Loss Pattern</p><p className="text-lg font-bold" style={{ color: cl }}>{analysis.pattern}</p>{analysis.pattern !== 'No Loss' && analysis.pattern !== 'Insufficient data' && <div className="flex space-x-4 mt-1"><span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Bursts: {analysis.burstCount}</span><span className="text-xs" style={{ color: 'var(--text-secondary)' }}>Random: {analysis.randomCount}</span></div>}</div>;
+        };
+
+        const Recommendations = ({ data }) => {
+            if (!data) return null; const { current, qoe } = data; const tips = [];
+            if (current.latency_ms > 100) tips.push({ i: '🚀', t: 'Latency is high. Move closer to router or switch to 5GHz.' });
+            if (current.jitter_ms > 20) tips.push({ i: '📶', t: 'Jitter elevated. Close bandwidth-heavy apps.' });
+            if (current.packet_loss_pct > 1) tips.push({ i: '📦', t: 'Packet loss detected. Restart router or check cables.' });
+            if (qoe.app_profiles['Gaming'] === 'Unplayable') tips.push({ i: '🎮', t: 'Gaming needs <50ms latency. Use wired connection.' });
+            if (qoe.app_profiles['Video Call'] === 'Laggy') tips.push({ i: '📹', t: 'Video calls need <150ms. Close other tabs.' });
+            if (qoe.total_score >= 75) tips.push({ i: '✅', t: 'Network is performing well!' });
+            if (!tips.length) tips.push({ i: '💡', t: 'Conditions normal. Keep monitoring.' });
+            return <div className="glass p-5 rounded-3xl"><h3 className="text-lg font-bold mb-3 flex items-center" style={{ color: 'var(--text-primary)' }}><span className="w-2 h-2 rounded-full bg-yellow-500 mr-3"></span>Recommendations</h3><div className="space-y-2">{tips.slice(0, 4).map((tip, i) => <div key={i} className="flex items-start space-x-3 p-3 rounded-xl" style={{ background: 'var(--bg-card-solid)' }}><span className="text-lg flex-shrink-0">{tip.i}</span><span className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{tip.t}</span></div>)}</div></div>;
+        };
+
+        const SpeedTest = ({ backendUrl }) => {
+            const [running, setRunning] = useState(false), [results, setResults] = useState(null), [progress, setProgress] = useState({ phase: 'idle', progress: 0 });
+            const run = async () => { setRunning(true); setResults(null); const r = await runSpeedTest(backendUrl, setProgress); setResults(r); setRunning(false); };
+            return <div className="glass p-6 rounded-3xl"><div className="flex justify-between items-center mb-5"><h3 className="text-lg font-bold flex items-center" style={{ color: 'var(--text-primary)' }}><span className="w-2 h-2 rounded-full bg-cyan-500 mr-3"></span>Speed Test</h3><button onClick={run} disabled={running} className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold disabled:opacity-50">{running ? `${progress.phase}...` : 'Run Test'}</button></div>
+                {running && <div className="space-y-2"><div className="flex justify-between text-xs" style={{ color: 'var(--text-muted)' }}><span className="uppercase font-bold">{progress.phase}</span><span>{Math.round(progress.progress)}%</span></div><div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden"><div className="h-full bg-cyan-500 rounded-full speed-bar" style={{ width: `${progress.progress}%` }}></div></div></div>}
+                {results && !running && <div className="grid grid-cols-2 gap-4"><div className="p-4 rounded-2xl border border-cyan-500/20 text-center" style={{ background: 'var(--bg-card-solid)' }}><p className="text-xs uppercase font-bold mb-1" style={{ color: 'var(--text-muted)' }}>Download</p><p className="text-3xl font-bold text-cyan-400">{results.download}</p><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Mbps</p></div><div className="p-4 rounded-2xl border border-violet-500/20 text-center" style={{ background: 'var(--bg-card-solid)' }}><p className="text-xs uppercase font-bold mb-1" style={{ color: 'var(--text-muted)' }}>Upload</p><p className="text-3xl font-bold text-violet-400">{results.upload}</p><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Mbps</p></div></div>}
+                {!results && !running && <div className="text-center py-4 italic text-sm" style={{ color: 'var(--text-muted)' }}>Measures real download and upload throughput.</div>}</div>;
+        };
+
+        const MultiPing = ({ backendUrl }) => {
+            const [results, setResults] = useState(null);
+            const run = async () => { try { const r = await fetch(`${backendUrl}/api/ping/multi`); setResults(await r.json()); } catch (e) { } };
+            useEffect(() => { run(); const id = setInterval(run, 15000); return () => clearInterval(id); }, []);
+            const gc = ms => ms < 50 ? '#10B981' : ms < 150 ? '#F59E0B' : '#EF4444';
+            return <div className="glass p-6 rounded-3xl"><h3 className="text-lg font-bold mb-4 flex items-center" style={{ color: 'var(--text-primary)' }}><span className="w-2 h-2 rounded-full bg-amber-500 mr-3"></span>Multi-Target Ping</h3>{results ? <div className="space-y-3">{results.map((r, i) => <div key={i} className="flex items-center space-x-3"><span className="text-xs w-28 truncate font-medium" style={{ color: 'var(--text-secondary)' }}>{r.name}</span><div className="flex-1 h-3 bg-slate-800 rounded-full overflow-hidden"><div className="h-full rounded-full speed-bar" style={{ width: `${Math.min(100, (r.latency_ms / 300) * 100)}%`, background: gc(r.latency_ms) }}></div></div><span className="text-xs font-bold w-14 text-right" style={{ color: gc(r.latency_ms) }}>{r.latency_ms >= 0 ? `${Math.round(r.latency_ms)}ms` : 'ERR'}</span></div>)}</div> : <div className="text-center py-3"><div className="w-6 h-6 border-2 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto"></div></div>}</div>;
+        };
+
+        const Timeline = ({ events }) => {
+            if (!events.length) return null;
+            return <div className="glass p-5 rounded-3xl"><h3 className="text-lg font-bold mb-3 flex items-center" style={{ color: 'var(--text-primary)' }}><span className="w-2 h-2 rounded-full bg-pink-500 mr-3"></span>Timeline</h3><div className="space-y-2 max-h-36 overflow-y-auto">{events.slice(-10).reverse().map((e, i) => <div key={i} className="flex items-start space-x-3 text-xs"><span className="w-16 flex-shrink-0 font-mono" style={{ color: 'var(--text-muted)' }}>{e.time}</span><div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${e.type === 'alert' ? 'bg-red-400' : e.type === 'change' ? 'bg-amber-400' : 'bg-emerald-400'}`}></div><span style={{ color: 'var(--text-secondary)' }}>{e.message}</span></div>)}</div></div>;
+        };
+
+        const PerfTiming = ({ timing }) => {
+            if (!timing) return null;
+            const items = [{ l: 'DNS', v: timing.dns_ms, c: '#3B82F6' }, { l: 'TCP', v: timing.tcp_ms, c: '#8B5CF6' }, { l: 'TLS', v: timing.tls_ms, c: '#EC4899' }];
+            const tot = items.reduce((s, i) => s + i.v, 0) || 1;
+            return <div className="glass p-4 rounded-2xl"><p className="text-xs font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--text-muted)' }}>Connection Timing</p><div className="space-y-2">{items.map((i, idx) => <div key={idx}><div className="flex justify-between text-xs mb-0.5"><span style={{ color: 'var(--text-secondary)' }}>{i.l}</span><span className="font-bold" style={{ color: i.c }}>{i.v.toFixed(1)}ms</span></div><div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden"><div className="h-full rounded-full" style={{ width: `${Math.max(2, (i.v / tot) * 100)}%`, background: i.c }}></div></div></div>)}</div></div>;
+        };
+
+        // ─── Main Dashboard ───
+        const Dashboard = () => {
+            const saved = load('netpulse_session');
+            const [data, setData] = useState(null), [story, setStory] = useState("Collecting signal intelligence..."), [loadingStory, setLoadingStory] = useState(false);
+            const [backendUrl, setBackendUrl] = useState(API_BASE_URL), [sampleCount, setSampleCount] = useState(saved?.sampleCount || 0);
+            const [history, setHistory] = useState(saved?.history || []), [events, setEvents] = useState(saved?.events || []);
+            const [activeTab, setActiveTab] = useState('overview'), [totalBytes, setTotalBytes] = useState(saved?.totalBytes || 0);
+            const [theme, setTheme] = useState(load('netpulse_theme') || 'dark'), [soundEnabled, setSoundEnabled] = useState(true);
+            const [isSimulating, setIsSimulating] = useState(false), [simParams, setSimParams] = useState({ latency: 30, jitter: 5, loss: 0 });
+            const prevQoE = useRef(null);
+
+            // Theme
+            useEffect(() => { document.documentElement.setAttribute('data-theme', theme); save('netpulse_theme', theme); }, [theme]);
+            useEffect(() => { requestNotifPerm(); }, []);
+            // Save session
+            useEffect(() => { const id = setInterval(() => { save('netpulse_session', { history: history.slice(-120), events: events.slice(-50), sampleCount, totalBytes }); }, 5000); return () => clearInterval(id); }, [history, events, sampleCount, totalBytes]);
+            // Connection change
+            useEffect(() => { const conn = navigator.connection || navigator.mozConnection || navigator.webkitConnection; if (conn) { const h = () => { const now = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }); setEvents(p => [...p, { time: now, type: 'change', message: `Connection: ${conn.effectiveType} (${conn.downlink}Mbps)` }]); sendNotif('NetPulse', 'Network connection changed'); }; conn.addEventListener('change', h); return () => conn.removeEventListener('change', h); }; }, []);
+
+            // Polling
+            useEffect(() => {
+                let active = true, tid;
+                const poll = async () => {
+                    if (!active) return; try {
+                        const m = await collectMetrics(backendUrl); const r = await fetch(`${backendUrl}/api/metrics/browser`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(m) });
+                        if (r.ok) {
+                            const d = await r.json(); setData(d); setSampleCount(p => p + 1); setTotalBytes(p => p + 2048);
+                            setHistory(p => { const n = [...p, { latency: Math.round(d.current.latency_ms), jitter: Math.round(d.current.jitter_ms * 10) / 10, loss: d.current.packet_loss_pct, throughput: d.current.tx_rate_mbps, qoe: Math.round(d.qoe.total_score) }]; return n.slice(-120); });
+                            const now = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                            if (prevQoE.current && prevQoE.current !== d.qoe.label) {
+                                setEvents(p => [...p, { time: now, type: d.qoe.label === 'Poor' ? 'alert' : 'info', message: `Quality: ${prevQoE.current} > ${d.qoe.label} (${Math.round(d.qoe.total_score)}%)` }]);
+                                if (d.qoe.label === 'Poor') { sendNotif('NetPulse: Quality Dropped!', `Score: ${Math.round(d.qoe.total_score)}%`); if (soundEnabled) playAlertSound(); }
+                            }
+                            if (d.causes.length > 0 && prevQoE.current) { d.causes.forEach(c => { setEvents(p => { if (p.length > 0 && p[p.length - 1].message.includes(c.type)) return p; return [...p, { time: now, type: 'alert', message: `Warning: ${c.type}` }]; }); }); }
+                            prevQoE.current = d.qoe.label;
+                        }
+                    } catch (e) { } if (active) tid = setTimeout(poll, 3000);
+                };
+                poll(); return () => { active = false; clearTimeout(tid); };
+            }, [backendUrl, soundEnabled]);
+
+            const simQoE = isSimulating ? (() => { const { latency, jitter, loss } = simParams; const s = 0.35 * Math.max(0, 100 - latency / 2) + 0.25 * Math.max(0, 100 - jitter * 2) + 0.25 * Math.max(0, 100 - loss * 10) + 0.15 * 75; return { score: s, label: s >= 75 ? 'Good' : s >= 45 ? 'Moderate' : 'Poor' }; })() : null;
+            const fetchStory = async () => { setLoadingStory(true); try { const r = await fetch(`${backendUrl}/api/analyze/story`, { method: 'POST' }); const d = await r.json(); setStory(d.story); } catch (e) { setStory("Analysis failed."); } setLoadingStory(false); };
+            const shareResults = () => { if (!data) return; const txt = `NetPulse Report\nQoE: ${data.qoe.label} (${Math.round(data.qoe.total_score)}%)\nLatency: ${Math.round(data.current.latency_ms)}ms\nJitter: ${Math.round(data.current.jitter_ms)}ms\nLoss: ${data.current.packet_loss_pct}%\nDownlink: ${data.current.tx_rate_mbps}Mbps\nVideo: ${data.qoe.app_profiles['Video Call']}\nGaming: ${data.qoe.app_profiles['Gaming']}\nStreaming: ${data.qoe.app_profiles['Streaming']}`; navigator.clipboard.writeText(txt).then(() => alert('Copied to clipboard!')).catch(() => { }); };
+
+            const anomalies = detectAnomalies(history);
+            const lossPattern = analyzeLossPattern(history);
+            const formatBytes = (b) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(2)} MB`;
+
+            // Session Compare
+            const savedSessions = load('netpulse_sessions') || [];
+            const saveCurrentSession = () => {
+                const sessions = load('netpulse_sessions') || [];
+                sessions.push({ date: new Date().toLocaleString(), samples: sampleCount, avgLatency: history.length ? Math.round(history.reduce((s, h) => s + h.latency, 0) / history.length) : 0, avgQoE: history.length ? Math.round(history.reduce((s, h) => s + h.qoe, 0) / history.length) : 0 });
+                save('netpulse_sessions', sessions.slice(-10));
+                alert('Session saved!');
             };
 
-            const simResults = isSimulating ? computeSimulatedQoE() : null;
-
-            const fetchStory = async () => {
-                setLoadingStory(true);
-                try {
-                    const response = await fetch(`${backendUrl}/api/analyze/story`, { method: 'POST' });
-                    const resData = await response.json();
-                    setStory(resData.story);
-                } catch (e) {
-                    setStory("Failed to generate analysis. Check backend connection.");
-                }
-                setLoadingStory(false);
-            };
-
-            if (!data) return (
-                <div className="flex h-screen items-center justify-center flex-col space-y-4">
-                    <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                    <p className="text-blue-400 animate-pulse">Measuring your network...</p>
-                    <p className="text-xs text-slate-500">Pinging {backendUrl || 'server'} to measure latency, jitter & loss</p>
-                    <div className="glass p-4 rounded-xl max-w-sm text-center">
-                        <p className="text-xs text-slate-500 mb-2 uppercase font-bold tracking-widest">Backend URL</p>
-                        <input 
-                            type="text" 
-                            className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-300 focus:outline-none focus:border-blue-500 transition-colors"
-                            value={backendUrl}
-                            onChange={(e) => setBackendUrl(e.target.value)}
-                            placeholder="Enter Backend URL (e.g. https://...)"
-                        />
-                    </div>
-                </div>
-            );
+            if (!data) return <div className="flex h-screen items-center justify-center flex-col space-y-4"><div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"></div><p className="text-blue-400 animate-pulse text-lg font-semibold">Measuring your network...</p><p className="text-xs" style={{ color: 'var(--text-muted)' }}>Pinging server for latency, jitter and packet loss</p><div className="glass p-4 rounded-xl max-w-sm text-center mt-4"><p className="text-xs mb-2 uppercase font-bold tracking-widest" style={{ color: 'var(--text-muted)' }}>Backend URL</p><input type="text" className="w-full border rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-blue-500 transition-colors" style={{ background: 'var(--bg-card-solid)', borderColor: 'var(--border)', color: 'var(--text-primary)' }} value={backendUrl} onChange={e => setBackendUrl(e.target.value)} placeholder="https://your-backend.onrender.com" /></div></div>;
 
             const { current, qoe, causes } = data;
+            const tabs = [{ key: 'overview', label: 'Overview' }, { key: 'charts', label: 'Live Charts' }, { key: 'tools', label: 'Tools' }];
 
             return (
-                <div className="max-w-7xl mx-auto px-6 py-12">
-                    <header className="flex justify-between items-center mb-12">
-                        <div>
-                            <h1 className="text-4xl font-bold accent-gradient tracking-tighter">NetPulse</h1>
-                            <p className="text-slate-500">WiFi Experience Intelligence Platform</p>
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+                    <header className="flex flex-wrap justify-between items-center mb-5 gap-3 no-print">
+                        <div className="flex items-center space-x-3">
+                            <img src="/static/favicon.svg" alt="" className="w-9 h-9" />
+                            <div><h1 className="text-2xl sm:text-3xl font-bold accent-gradient tracking-tighter">NetPulse</h1><p className="text-xs" style={{ color: 'var(--text-muted)' }}>WiFi Experience Intelligence</p></div>
                         </div>
-                        <div className="flex items-center space-x-6">
-                            <div className="flex items-center space-x-2">
-                                <div className={`w-2 h-2 rounded-full ${collecting ? 'bg-yellow-400 pulse' : 'bg-emerald-400'}`}></div>
-                                <span className="text-xs text-slate-500 uppercase tracking-widest font-bold">{sampleCount} samples</span>
-                            </div>
-                            <button 
-                                onClick={() => window.open(`${backendUrl}/api/export/json`, '_blank')}
-                                className="px-4 py-2 rounded-xl border border-slate-700 hover:border-slate-500 text-slate-400 text-xs font-bold transition-all uppercase tracking-widest"
-                            >
-                                Export Session
-                            </button>
-                            <div className="text-right">
-                                <p className="text-xs uppercase text-slate-500 font-bold tracking-widest">Connection State</p>
-                                <p className={`text-xl font-bold ${qoe.label === 'Good' ? 'text-emerald-400' : qoe.label === 'Moderate' ? 'text-orange-400' : 'text-red-400'}`}>
-                                    {qoe.label} ({Math.round(qoe.total_score)}%)
-                                </p>
-                            </div>
-                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center glass ${qoe.label === 'Good' ? 'border-emerald-500/30' : 'border-orange-500/30'}`}>
-                                <div className={`w-3 h-3 rounded-full ${qoe.label === 'Good' ? 'bg-emerald-500' : 'bg-orange-500'} pulse`}></div>
-                            </div>
+                        <div className="flex items-center space-x-3 sm:space-x-5 mobile-stack">
+                            <div className="flex items-center space-x-2"><div className="w-2 h-2 rounded-full bg-emerald-400 pulse"></div><span className="text-xs uppercase tracking-widest font-bold" style={{ color: 'var(--text-muted)' }}>{sampleCount}</span></div>
+                            <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} className="px-2 py-1 rounded-lg text-sm" style={{ background: 'var(--bg-card-solid)', border: '1px solid var(--border)' }}>{theme === 'dark' ? '☀️' : '🌙'}</button>
+                            <button onClick={() => setSoundEnabled(!soundEnabled)} className="px-2 py-1 rounded-lg text-sm" style={{ background: 'var(--bg-card-solid)', border: '1px solid var(--border)' }}>{soundEnabled ? '🔊' : '🔇'}</button>
+                            <button onClick={shareResults} className="px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-widest" style={{ background: 'var(--bg-card-solid)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>Share</button>
+                            <button onClick={() => window.print()} className="px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-widest" style={{ background: 'var(--bg-card-solid)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>PDF</button>
+                            <button onClick={() => window.open(`${backendUrl}/api/export/json`, '_blank')} className="px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-widest" style={{ background: 'var(--bg-card-solid)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}>Export</button>
+                            <QoEGauge score={qoe.total_score} label={qoe.label} />
                         </div>
                     </header>
 
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                        <div className="lg:col-span-2 space-y-8">
-                            <SignalCanvas 
-                                rssi={current.rssi_dbm} 
-                                jitter={current.jitter_ms} 
-                                packetLoss={current.packet_loss_pct} 
-                            />
-                            
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                                {[
-                                    { label: 'Latency', value: `${Math.round(current.latency_ms)} ms`, sub: 'RTT to Server' },
-                                    { label: 'Jitter', value: `${Math.round(current.jitter_ms)} ms`, sub: 'Variance' },
-                                    { label: 'Loss', value: `${current.packet_loss_pct}%`, sub: 'Packets' },
-                                    { label: 'Downlink', value: `${current.tx_rate_mbps} Mbps`, sub: current.band }
-                                ].map(stat => (
-                                    <div key={stat.label} className="glass p-5 rounded-2xl">
-                                        <p className="text-xs text-slate-500 font-bold uppercase tracking-widest mb-1">{stat.label}</p>
-                                        <p className="text-2xl font-bold text-slate-200">{stat.value}</p>
-                                        <p className="text-xs text-slate-600 font-medium">{stat.sub}</p>
-                                    </div>
-                                ))}
-                            </div>
+                    <div className="flex space-x-4 sm:space-x-6 mb-6 border-b pb-1 no-print" style={{ borderColor: 'var(--border)' }}>
+                        {tabs.map(t => <button key={t.key} onClick={() => setActiveTab(t.key)} className={`text-xs sm:text-sm font-bold uppercase tracking-widest pb-2 transition-all ${activeTab === t.key ? 'tab-active' : 'hover:opacity-80'}`} style={{ color: activeTab === t.key ? '#3B82F6' : 'var(--text-muted)' }}>{t.label}</button>)}
+                    </div>
 
-                            <div className="glass p-8 rounded-3xl">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h3 className="text-xl font-bold text-slate-200 flex items-center">
-                                        <span className="w-2 h-2 rounded-full bg-blue-500 mr-3"></span>
-                                        "What If" Simulator
-                                    </h3>
-                                    <button 
-                                        onClick={() => setIsSimulating(!isSimulating)}
-                                        className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${isSimulating ? 'bg-red-500 hover:bg-red-400' : 'bg-blue-600 hover:bg-blue-500'}`}
-                                    >
-                                        {isSimulating ? 'Exit Simulator' : 'Start Simulation'}
-                                    </button>
-                                </div>
-                                
-                                {isSimulating ? (
-                                    <div className="space-y-6">
-                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                                            {[
-                                                { label: 'Latency (ms)', key: 'latency', min: 0, max: 500 },
-                                                { label: 'Jitter (ms)', key: 'jitter', min: 0, max: 100 },
-                                                { label: 'Packet Loss (%)', key: 'loss', min: 0, max: 20 }
-                                            ].map(param => (
-                                                <div key={param.key} className="space-y-2">
-                                                    <div className="flex justify-between">
-                                                        <label className="text-xs text-slate-500 uppercase font-bold">{param.label}</label>
-                                                        <span className="text-xs text-blue-400 font-bold">{simParams[param.key]}</span>
-                                                    </div>
-                                                    <input 
-                                                        type="range" min={param.min} max={param.max} 
-                                                        value={simParams[param.key]}
-                                                        onChange={(e) => setSimParams({...simParams, [param.key]: parseFloat(e.target.value)})}
-                                                        className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                                                    />
-                                                </div>
-                                            ))}
-                                        </div>
-                                        <div className="p-6 rounded-2xl bg-blue-500/5 border border-blue-500/20 flex items-center justify-between">
-                                            <div>
-                                                <p className="text-xs text-slate-500 uppercase font-bold mb-1">Predicted Quality</p>
-                                                <p className={`text-2xl font-bold ${simResults.label === 'Good' ? 'text-emerald-400' : 'text-orange-400'}`}>
-                                                    {simResults.label} ({Math.round(simResults.score)}%)
-                                                </p>
-                                            </div>
-                                            <div className="text-right text-xs text-slate-500 max-w-[200px]">
-                                                Simulation based on your local weighted QoE model.
-                                            </div>
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="text-center py-6 text-slate-500 italic text-sm">
-                                        Enter simulation mode to predict network quality under different conditions.
-                                    </div>
-                                )}
-                            </div>
-
-                            <div className="glass p-8 rounded-3xl">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h3 className="text-xl font-bold text-slate-200">WiFi Story Mode</h3>
-                                    <button 
-                                        onClick={fetchStory}
-                                        disabled={loadingStory}
-                                        className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-all disabled:opacity-50"
-                                    >
-                                        {loadingStory ? 'Analyzing...' : 'Refresh Story'}
-                                    </button>
-                                </div>
-                                <div className="p-6 rounded-2xl bg-slate-900/50 border border-slate-800 italic text-slate-300 leading-relaxed text-lg">
-                                    "{story}"
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="space-y-8">
-                            <div className="glass p-6 rounded-3xl">
-                                <h3 className="text-lg font-bold text-slate-200 mb-6 flex items-center">
-                                    <span className="w-2 h-2 rounded-full bg-purple-500 mr-3"></span>
-                                    Application Profiler
-                                </h3>
-                                <div className="space-y-4">
-                                    {Object.entries(qoe.app_profiles).map(([app, status]) => (
-                                        <div key={app} className="flex justify-between items-center p-4 rounded-xl bg-slate-900/40">
-                                            <span className="font-medium text-slate-400">{app}</span>
-                                            <span className={`text-sm font-bold px-3 py-1 rounded-lg ${
-                                                status === 'Excellent' || status === 'Fluid' || status === 'Stable' 
-                                                ? 'bg-emerald-500/10 text-emerald-400' 
-                                                : 'bg-orange-500/10 text-orange-400'
-                                            }`}>
-                                                {status}
-                                            </span>
-                                        </div>
+                    {activeTab === 'overview' && (
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                            <div className="lg:col-span-2 space-y-5">
+                                <SignalCanvas rssi={current.rssi_dbm} jitter={current.jitter_ms} packetLoss={current.packet_loss_pct} />
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mobile-full">
+                                    {[{ l: 'Latency', v: `${Math.round(current.latency_ms)}`, u: 'ms', s: 'RTT', f: 'latency', c: '#3B82F6' }, { l: 'Jitter', v: `${Math.round(current.jitter_ms)}`, u: 'ms', s: 'Variance', f: 'jitter', c: '#8B5CF6' }, { l: 'Loss', v: `${current.packet_loss_pct}`, u: '%', s: 'Packets', f: 'loss', c: '#EF4444' }, { l: 'Downlink', v: `${current.tx_rate_mbps}`, u: 'Mbps', s: current.band, f: 'throughput', c: '#10B981' }].map(st => (
+                                        <div key={st.l} className={`glass p-3 rounded-2xl ${anomalies.some(a => st.f === 'latency' && a.index === history.length - 1) ? 'anomaly-flash' : ''}`}><div className="flex justify-between items-start"><p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>{st.l}</p><Sparkline data={history.slice(-20).map(h => h[st.f])} color={st.c} /></div><div className="flex items-baseline space-x-1"><p className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{st.v}</p><p className="text-xs" style={{ color: 'var(--text-muted)' }}>{st.u}</p></div><p className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{st.s}</p></div>
                                     ))}
                                 </div>
+                                <Heatmap history={history} />
+                                {anomalies.length > 0 && <div className="glass p-4 rounded-2xl border border-red-500/30"><div className="flex items-center space-x-2 mb-2"><span className="text-red-400 font-bold text-xs uppercase">Anomalies Detected ({anomalies.length})</span></div><div className="flex flex-wrap gap-2">{anomalies.slice(-5).map((a, i) => <span key={i} className="text-xs px-2 py-1 rounded-lg bg-red-500/10 text-red-400">{a.value}ms (z={a.zScore})</span>)}</div></div>}
+                                <div className="glass p-5 rounded-3xl"><div className="flex justify-between items-center mb-3"><h3 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>WiFi Story</h3><button onClick={fetchStory} disabled={loadingStory} className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold disabled:opacity-50">{loadingStory ? '...' : 'Analyze'}</button></div><div className="p-4 rounded-2xl border italic leading-relaxed" style={{ background: 'var(--bg-card-solid)', borderColor: 'var(--border)', color: 'var(--text-secondary)' }}>{story}</div></div>
                             </div>
-
-                            <div className="glass p-6 rounded-3xl">
-                                <h3 className="text-lg font-bold text-slate-200 mb-6 flex items-center">
-                                    <span className="w-2 h-2 rounded-full bg-red-500 mr-3"></span>
-                                    Root Cause Analysis
-                                </h3>
-                                <div className="space-y-4">
-                                    {causes.length > 0 ? causes.map((cause, i) => (
-                                        <div key={i} className="p-4 rounded-xl bg-red-500/5 border border-red-500/20">
-                                            <p className="text-red-400 font-bold mb-1">{cause.type}</p>
-                                            <p className="text-xs text-slate-400 mb-3">{cause.evidence}</p>
-                                            <div className="p-2 rounded-lg bg-slate-900/50 text-xs text-emerald-400 border border-emerald-500/20">
-                                                <span className="font-bold mr-1 tracking-tighter uppercase">Mitigation:</span>
-                                                {cause.mitigation}
-                                            </div>
-                                        </div>
-                                    )) : (
-                                        <div className="text-center py-8">
-                                            <p className="text-slate-500 text-sm">No interference detected.</p>
-                                            <p className="text-xs text-slate-600 mt-1">Environment is stable.</p>
-                                        </div>
-                                    )}
+                            <div className="space-y-5">
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div className="glass p-3 rounded-2xl text-center"><p className="text-xs font-bold uppercase tracking-widest mb-1" style={{ color: 'var(--text-muted)' }}>Bandwidth</p><p className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>{formatBytes(totalBytes)}</p></div>
+                                    <StabilityScore backendUrl={backendUrl} />
                                 </div>
+                                <LossPattern history={history} />
+                                <div className="glass p-5 rounded-3xl"><h3 className="text-lg font-bold mb-3 flex items-center" style={{ color: 'var(--text-primary)' }}><span className="w-2 h-2 rounded-full bg-purple-500 mr-3"></span>App Profiler</h3><div className="space-y-2">{Object.entries(qoe.app_profiles).map(([a, s]) => <div key={a} className="flex justify-between items-center p-2.5 rounded-xl" style={{ background: 'var(--bg-card-solid)' }}><span className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>{a}</span><span className={`text-xs font-bold px-3 py-1 rounded-lg ${['Excellent', 'Fluid', 'Stable'].includes(s) ? 'bg-emerald-500/10 text-emerald-400' : 'bg-orange-500/10 text-orange-400'}`}>{s}</span></div>)}</div></div>
+                                <div className="glass p-5 rounded-3xl"><h3 className="text-lg font-bold mb-3 flex items-center" style={{ color: 'var(--text-primary)' }}><span className="w-2 h-2 rounded-full bg-red-500 mr-3"></span>Root Causes</h3><div className="space-y-2">{causes.length > 0 ? causes.map((c, i) => <div key={i} className="p-3 rounded-xl bg-red-500/5 border border-red-500/20"><p className="text-red-400 font-bold text-sm mb-1">{c.type}</p><p className="text-xs mb-2" style={{ color: 'var(--text-secondary)' }}>{c.evidence}</p><div className="p-2 rounded-lg text-xs text-emerald-400 border border-emerald-500/20" style={{ background: 'var(--bg-card-solid)' }}><span className="font-bold mr-1 uppercase">Fix:</span>{c.mitigation}</div></div>) : <div className="text-center py-4"><p className="text-emerald-400 text-sm font-medium">All clear</p></div>}</div></div>
+                                <Recommendations data={data} />
+                                <PerfTiming timing={data.timing} />
+                                <Timeline events={events} />
                             </div>
-                        </div>
-                    </div>
+                        </div>)}
+
+                    {activeTab === 'charts' && (<div className="space-y-5"><div className="grid grid-cols-1 md:grid-cols-2 gap-5"><LiveChart history={history} field="latency" label="Latency" color="#3B82F6" unit="ms" anomalies={anomalies} /><LiveChart history={history} field="jitter" label="Jitter" color="#8B5CF6" unit="ms" /><LiveChart history={history} field="loss" label="Packet Loss" color="#EF4444" unit="%" /><LiveChart history={history} field="qoe" label="QoE Score" color="#10B981" unit="%" /></div><Heatmap history={history} />{anomalies.length > 0 && <div className="glass p-4 rounded-2xl"><p className="text-xs font-bold text-red-400 uppercase mb-2">Latency Anomalies ({anomalies.length} detected)</p><div className="flex flex-wrap gap-2">{anomalies.map((a, i) => <span key={i} className="text-xs px-2 py-1 rounded bg-red-500/10 text-red-400">{a.value}ms (z-score: {a.zScore})</span>)}</div></div>}</div>)}
+
+                    {activeTab === 'tools' && (<div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                        <SpeedTest backendUrl={backendUrl} /><MultiPing backendUrl={backendUrl} /><TracerouteViz backendUrl={backendUrl} />
+                        {/* Session Compare */}
+                        <div className="glass p-6 rounded-3xl"><div className="flex justify-between items-center mb-4"><h3 className="text-lg font-bold flex items-center" style={{ color: 'var(--text-primary)' }}><span className="w-2 h-2 rounded-full bg-violet-500 mr-3"></span>Session History</h3><button onClick={saveCurrentSession} className="px-4 py-2 rounded-xl bg-violet-600 hover:bg-violet-500 text-white text-sm font-bold">Save Session</button></div>
+                            {savedSessions.length > 0 ? <div className="space-y-2">{savedSessions.slice(-5).reverse().map((s, i) => <div key={i} className="flex justify-between items-center p-3 rounded-xl" style={{ background: 'var(--bg-card-solid)' }}><div><p className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>{s.date}</p><p className="text-xs" style={{ color: 'var(--text-muted)' }}>{s.samples} samples</p></div><div className="text-right"><p className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>{s.avgQoE}% QoE</p><p className="text-xs" style={{ color: 'var(--text-muted)' }}>{s.avgLatency}ms avg</p></div></div>)}</div> : <div className="text-center py-4 text-sm italic" style={{ color: 'var(--text-muted)' }}>No saved sessions yet.</div>}</div>
+
+                        {/* Simulator */}
+                        <div className="glass p-6 rounded-3xl lg:col-span-2"><div className="flex justify-between items-center mb-5"><h3 className="text-lg font-bold flex items-center" style={{ color: 'var(--text-primary)' }}><span className="w-2 h-2 rounded-full bg-blue-500 mr-3"></span>"What If" Simulator</h3><button onClick={() => setIsSimulating(!isSimulating)} className={`px-4 py-2 rounded-xl text-sm font-bold ${isSimulating ? 'bg-red-500 hover:bg-red-400' : 'bg-blue-600 hover:bg-blue-500'} text-white`}>{isSimulating ? 'Exit' : 'Simulate'}</button></div>
+                            {isSimulating ? <div className="space-y-5"><div className="grid grid-cols-1 md:grid-cols-3 gap-5">{[{ l: 'Latency (ms)', k: 'latency', mx: 500 }, { l: 'Jitter (ms)', k: 'jitter', mx: 100 }, { l: 'Loss (%)', k: 'loss', mx: 20 }].map(p => <div key={p.k} className="space-y-2"><div className="flex justify-between"><label className="text-xs uppercase font-bold" style={{ color: 'var(--text-muted)' }}>{p.l}</label><span className="text-xs text-blue-400 font-bold">{simParams[p.k]}</span></div><input type="range" min={0} max={p.mx} value={simParams[p.k]} onChange={e => setSimParams({ ...simParams, [p.k]: parseFloat(e.target.value) })} className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500" /></div>)}</div><div className="p-5 rounded-2xl bg-blue-500/5 border border-blue-500/20 flex items-center justify-between"><div><p className="text-xs uppercase font-bold mb-1" style={{ color: 'var(--text-muted)' }}>Predicted</p><p className={`text-2xl font-bold ${simQoE?.label === 'Good' ? 'text-emerald-400' : 'text-orange-400'}`}>{simQoE?.label} ({Math.round(simQoE?.score || 0)}%)</p></div></div></div> : <div className="text-center py-4 italic text-sm" style={{ color: 'var(--text-muted)' }}>Predict quality under different conditions.</div>}</div>
+                    </div>)}
                 </div>
             );
         };
@@ -425,4 +521,5 @@
         root.render(<Dashboard />);
     </script>
 </body>
+
 </html>
